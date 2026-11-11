@@ -1,0 +1,28 @@
+{
+    "name": "skyvia",
+    "version": "0.0.0",
+    "private": true,
+    "engines": {
+        "node": ">=24 <25"
+    },
+    "workspaces": [
+        "apps/*",
+        "packages/*"
+    ],
+    "scripts": {
+        "dev": "turbo run dev",
+        "build": "turbo run build",
+        "lint": "turbo run lint",
+        "dev:web": "npm run dev --workspace=apps/web",
+        "dev:gateway": "npm run dev --workspace=apps/api-gateway",
+        "dev:identity": "npm run dev --workspace=apps/identity-service",
+        "dev:flight": "npm run dev --workspace=apps/flight-service",
+        "infra:up": "docker compose --env-file .env -f infra/docker-compose.yaml up -d --wait",
+        "infra:down": "docker compose --env-file .env -f infra/docker-compose.yaml down",
+        "infra:ps": "docker compose --env-file .env -f infra/docker-compose.yaml ps",
+        "infra:logs": "docker compose --env-file .env -f infra/docker-compose.yaml logs -f"
+    },
+    "devDependencies": {
+        "turbo": "^2.11.10"
+    }
+}

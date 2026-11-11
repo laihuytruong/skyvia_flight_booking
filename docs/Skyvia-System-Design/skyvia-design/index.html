@@ -1,0 +1,1205 @@
+<!doctype html><html lang="vi"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Skyvia — System Design</title><style>*{box-sizing:border-box}body{margin:0;font:16px/1.65 system-ui,sans-serif;color:#0f172a;background:#f8fafc}header{padding:56px max(24px,calc((100vw - 1200px)/2));background:#0f172a;color:white}header p{color:#cbd5e1}main{max-width:1248px;margin:auto;padding:24px}nav{display:flex;flex-wrap:wrap;gap:12px;margin:24px 0}a{color:#2563eb}nav a{background:white;border:1px solid #e2e8f0;padding:8px 12px;border-radius:8px;text-decoration:none}article{background:white;padding:32px;border:1px solid #e2e8f0;border-radius:12px;margin:32px 0}h1,h2,h3{line-height:1.3;scroll-margin-top:24px}h2{margin-top:40px}p{overflow-wrap:anywhere}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:14px}td{vertical-align:top;border:1px solid #e2e8f0;padding:10px;min-width:140px}tr:first-child{background:#eff6ff;font-weight:600}code{background:#f1f5f9;padding:2px 4px;border-radius:4px;font-size:13px}pre{overflow:auto;background:#0f172a;color:#e2e8f0;padding:20px;border-radius:8px}pre code{background:none}figure{margin:24px 0;background:white;border:1px solid #e2e8f0;border-radius:12px;padding:12px}img{max-width:100%;height:auto}figcaption{padding:8px;font-weight:600}.pill{display:inline-block;border:1px solid #64748b;padding:5px 12px;border-radius:99px;margin-right:8px}@media(max-width:700px){article{padding:18px}main{padding:12px}}</style><header><span class="pill">NestJS microservices</span><span class="pill">React</span><span class="pill">AI assistant</span><h1>Skyvia — Flight booking platform</h1><p>32 màn hình · 44 bảng nghiệp vụ + 16 bảng hạ tầng · 8 miền dữ liệu</p></header><main><nav><a href="#gallery">Ảnh giao diện</a><a href="#doc0">README.md</a><a href="#doc1">SYSTEM-DESIGN.md</a><a href="#doc2">SCREEN-CATALOG.md</a><a href="#doc3">RELATIONS.md</a><a href="#doc4">DATABASE-DICTIONARY.md</a><a href="#doc5">VALIDATION.md</a><a href="#doc6">IMAGE-PROMPTS.md</a><a href="schema.sql">schema.sql</a><a href="seed.sql">seed.sql</a></nav><h2 id="gallery">Bộ template giao diện</h2><figure><a href="images/01-discovery-auth.png" target="_blank"><img src="images/01-discovery-auth.png" alt="Nhóm màn hình 1" loading="lazy"></a><figcaption>01. Khám phá & tài khoản · bấm để xem ảnh gốc</figcaption></figure><figure><a href="images/02-booking-payment.png" target="_blank"><img src="images/02-booking-payment.png" alt="Nhóm màn hình 2" loading="lazy"></a><figcaption>02. Đặt vé & thanh toán · bấm để xem ảnh gốc</figcaption></figure><figure><a href="images/03-trips-assistant.png" target="_blank"><img src="images/03-trips-assistant.png" alt="Nhóm màn hình 3" loading="lazy"></a><figcaption>03. Chuyến đi & AI · bấm để xem ảnh gốc</figcaption></figure><figure><a href="images/04-admin-support.png" target="_blank"><img src="images/04-admin-support.png" alt="Nhóm màn hình 4" loading="lazy"></a><figcaption>04. Quản trị & CSKH · bấm để xem ảnh gốc</figcaption></figure><article id="doc0"><h1>Skyvia — thiết kế hệ thống đặt vé máy bay có chatbot AI</h1>
+<p>Ngày thiết kế: 11/11/2026. Công nghệ mục tiêu: NestJS microservices, React + TypeScript, PostgreSQL.</p>
+<p>Đây là bộ thiết kế để bắt đầu triển khai, chưa phải ứng dụng chạy hoàn chỉnh hay tích hợp xuất vé thật.</p>
+<h2>Đọc theo thứ tự</h2>
+<p>1. <code>SYSTEM-DESIGN.md</code>: phạm vi, kiến trúc, công nghệ, luồng nghiệp vụ, chatbot, API và lộ trình.</p>
+<p>2. <code>SCREEN-CATALOG.md</code>: đặc tả 32 màn hình, route, thành phần và trạng thái cần có.</p>
+<p>3. <code>DATABASE-DICTIONARY.md</code>: toàn bộ bảng, cột, kiểu dữ liệu và ràng buộc.</p>
+<p>4. <code>RELATIONS.md</code>: quan hệ vật lý trong service và tham chiếu logic giữa service, sơ đồ Mermaid.</p>
+<p>5. <code>schema.sql</code>: DDL nền tảng PostgreSQL; <code>seed.sql</code>: dữ liệu danh mục mẫu.</p>
+<p>6. <code>optional-vector.sql</code>: bổ sung pgvector khi triển khai RAG, không bắt buộc với DDL gốc.</p>
+<p>Mở <code>index.html</code> để đọc toàn bộ tài liệu và xem ảnh trực tiếp. Thư mục <code>images/</code> chứa 4 ảnh template theo nhóm. Mỗi ảnh gồm 8 màn hình desktop; SCREEN-CATALOG.md là nguồn chính xác cho route, nhãn, trường và trạng thái. Ảnh là tham khảo thiết kế; các hàng dữ liệu và biểu đồ trong ảnh chỉ là dữ liệu minh họa.</p>
+<h2>Cách dùng schema</h2>
+<p>Tạo một database PostgreSQL trống cho môi trường thiết kế, rồi chạy:</p>
+<pre><code>psql &quot;$DATABASE_URL&quot; -v ON_ERROR_STOP=1 -f schema.sql
+psql &quot;$DATABASE_URL&quot; -v ON_ERROR_STOP=1 -f seed.sql</code></pre>
+<p>DDL có transaction, không có DROP và không thiết kế để chạy lặp. Mỗi schema là một miền sở hữu dữ liệu; dùng chung instance ở local giúp giảm chi phí. Production cần role riêng, migration riêng và chỉ service chủ sở hữu có quyền truy cập schema đó. Khi tách database vật lý, giữ nguyên ID logic và hợp đồng API/event; không có foreign key giữa service.</p>
+<p>Schema không tạo role/mật khẩu, không cấu hình broker hoặc tích hợp nhà cung cấp. Migrations thực tế phải chia theo service, kèm kiểm thử và chiến lược triển khai. Không đưa DATABASE_URL hay API key thật vào repository.</p></article><article id="doc1"><h1>Skyvia — mô tả và kiến trúc hệ thống</h1>
+<h2>1. Phạm vi và giả định</h2>
+<p>Skyvia là nền tảng trung gian đặt vé máy bay: người dùng tìm chuyến, so sánh giá, đặt vé một chiều/khứ hồi, thanh toán, xem vé, gửi yêu cầu đổi/hủy và hỏi trợ lý AI bằng tiếng Việt. Hệ thống không vận hành tồn chỗ của hãng. Hãng bay/nhà cung cấp là nguồn xác thực về giá, chỗ, điều kiện vé, PNR và số vé.</p>
+<p>Ba nhóm người dùng: CUSTOMER, SUPPORT và ADMIN. SUPPORT được truy cập hồ sơ/booking theo nhiệm vụ; quyền duyệt hoàn tiền, thay đổi cấu hình và phân quyền tách riêng. Chọn đăng nhập trước khi đặt vé để giảm phạm vi MVP. Khách chưa đăng nhập vẫn được tìm kiếm và đọc FAQ; chatbot cá nhân hóa cần đăng nhập.</p>
+<p>32 màn hình desktop được đặc tả ở SCREEN-CATALOG.md. Mobile áp dụng responsive cho cùng route: filter chuyển thành drawer, summary thành sticky bottom bar, bảng thành card; không phải bộ ảnh mobile riêng. Đa chặng được chuẩn bị trong dữ liệu nhưng UI multi-city, loyalty, vé đoàn, B2B đại lý và check-in trực tiếp nằm ngoài bộ MVP này.</p>
+<h2>2. Năng lực nghiệp vụ</h2>
+<div class="table-wrap"><table>
+<tr><td>Miền</td><td>Chức năng</td><td>Nguồn xác thực</td></tr>
+<tr><td>Tài khoản</td><td>Đăng ký, xác minh, đăng nhập, reset, session, hồ sơ, khách lưu sẵn</td><td>Identity service</td></tr>
+<tr><td>Chuyến bay</td><td>Airport autocomplete, tìm kiếm, lọc, so sánh hạng vé, reprice, sơ đồ ghế</td><td>Flight service → supplier</td></tr>
+<tr><td>Đặt vé</td><td>Snapshot hành khách/chặng/giá, giữ chỗ nếu hỗ trợ, xuất vé, đổi/hủy</td><td>Booking service → supplier</td></tr>
+<tr><td>Thanh toán</td><td>Tạo lần thanh toán, xác minh webhook, hoàn tiền, đối soát</td><td>Payment service → payment provider</td></tr>
+<tr><td>Tương tác</td><td>Coupon, nội dung, banner, điều khoản</td><td>Engagement service</td></tr>
+<tr><td>Thông báo</td><td>In-app, email, optional SMS</td><td>Notification service</td></tr>
+<tr><td>AI</td><td>Tìm chuyến qua tool, RAG chính sách, theo dõi vé cá nhân, chuyển nhân viên</td><td>Assistant service + domain APIs</td></tr>
+<tr><td>CSKH</td><td>Hộp thư, ticket, ghi chú nội bộ, audit quản trị</td><td>Support service</td></tr>
+</table></div>
+<h2>3. Topology microservices</h2>
+<pre><code>flowchart TD
+  Web[&quot;React customer + admin&quot;] --&gt; Gateway[&quot;NestJS API gateway&quot;]
+  Gateway --&gt; Identity[&quot;Identity service&quot;]
+  Gateway --&gt; Flight[&quot;Flight service&quot;]
+  Gateway --&gt; Booking[&quot;Booking service&quot;]
+  Gateway --&gt; Assistant[&quot;Assistant service&quot;]
+  Gateway --&gt; Payment[&quot;Payment service&quot;]
+  Gateway --&gt; Support[&quot;Support service&quot;]
+  Gateway --&gt; Engagement[&quot;Engagement service&quot;]
+  Booking --&gt; Flight
+  Flight --&gt; Supplier[&quot;Airline / GDS adapter&quot;]
+  Booking --&gt; Supplier
+  Assistant --&gt; Flight
+  Assistant --&gt; Booking
+  Assistant --&gt; Support
+  Payment --&gt; PSP[&quot;Payment provider&quot;]
+  Booking --&gt; Broker[&quot;RabbitMQ events&quot;]
+  Payment --&gt; Broker
+  Engagement --&gt; Broker
+  Broker --&gt; Notification[&quot;Notification service&quot;]
+  Broker --&gt; Support</code></pre>
+<p>Các đường API là HTTPS đồng bộ; các domain event qua RabbitMQ là bất đồng bộ. Gateway xử lý routing, JWT validation, rate limit, request ID và streaming; không giữ nghiệp vụ booking hoặc truy vấn trực tiếp database. Service tự kiểm tra quyền, dữ liệu đầu vào và state transition dù gateway đã kiểm tra.</p>
+<div class="table-wrap"><table>
+<tr><td>Service</td><td>Schema sở hữu</td><td>Giao tiếp và trách nhiệm chính</td></tr>
+<tr><td>api-gateway</td><td>Không có bảng nghiệp vụ</td><td>REST /api/v1, SSE chat và trạng thái booking, webhook routing giữ nguyên raw body</td></tr>
+<tr><td>identity-service</td><td>identity</td><td>API hồ sơ/auth; JWT asymmetric, rotation refresh token</td></tr>
+<tr><td>flight-service</td><td>flight</td><td>REST search/reprice/seat map; supplier adapter với timeout/circuit breaker</td></tr>
+<tr><td>booking-service</td><td>booking</td><td>Booking saga, giữ chỗ, xuất vé, đổi/hủy; consume payment events</td></tr>
+<tr><td>payment-service</td><td>payment</td><td>Checkout/webhook/refund/reconciliation; consume refund commands</td></tr>
+<tr><td>engagement-service</td><td>engagement</td><td>Coupon reservation/commit/release, nội dung và điều khoản</td></tr>
+<tr><td>notification-service</td><td>notification</td><td>Consume events; email/in-app/SMS; retry delivery</td></tr>
+<tr><td>assistant-service</td><td>assistant</td><td>LLM tool loop, RAG, conversation, feedback, tool audit</td></tr>
+<tr><td>support-service</td><td>support</td><td>CSKH, admin audit, dashboard tổng hợp qua API/read projection</td></tr>
+</table></div>
+<p>Dùng một PostgreSQL instance với 8 schema ở local; mỗi service có role và migrations riêng. Production có thể tách thành database riêng. Không có cross-service foreign key, không dùng Prisma relation xuyên miền để join. Dashboard dùng API aggregation ban đầu; khi cần báo cáo lớn mới tạo reporting projection từ event.</p>
+<h2>4. Luồng tìm kiếm và đặt vé</h2>
+<p>1. React gửi sân bay, ngày, số người lớn/trẻ em/em bé và hạng cabin. Server kiểm tra ngày, giới hạn hành khách và tính hợp lệ tuyến.</p>
+<p>2. Flight service gọi supplier adapter, chuẩn hóa offer, lưu metadata có TTL và trả <code>offerId</code>, <code>expiresAt</code>, giá/currency, điều kiện và các chặng. Khi một supplier lỗi, trả trạng thái PARTIAL thay vì giả lập kết quả thật.</p>
+<p>3. Người dùng chọn một offer đầy đủ gồm cả lượt đi/lượt về. Server reprice trước khi tạo booking; nếu giá/điều kiện đổi, trả quote mới để khách chấp nhận lại.</p>
+<p>4. Booking sao chép offer, hành khách, chặng, giá và phiên bản điều khoản. Ghế/hành lý là tùy chọn theo khả năng supplier. Seat map không phải bằng chứng đã giữ ghế.</p>
+<p>5. Nếu supplier hỗ trợ hold, tạo reservation và lưu deadline thực tế. Nếu không hỗ trợ hold, UI ghi rõ giá/chỗ còn cần xác nhận; không hiển thị giữ chỗ chắc chắn.</p>
+<p>6. Payment tạo checkout từ tổng tiền server. Supplier deadline và payment deadline phải có khoảng đệm đủ cho xuất vé; không tự chọn deadline dài hơn thời hạn supplier.</p>
+<p>7. Webhook hợp lệ cập nhật Payment và outbox trong một transaction. Booking consume <code>payment.succeeded</code>, kiểm tra currency/amount/booking rồi thực hiện xuất vé bằng request key ổn định.</p>
+<p>8. Khi supplier trả số vé, Booking lưu ticket/coupon, chuyển TICKETED, phát event. Notification gửi email và in-app. UI phân biệt PNR, mã booking nội bộ và số vé; chúng không đồng nghĩa.</p>
+<h3>Các trạng thái</h3>
+<pre><code>stateDiagram-v2
+  [*] --&gt; DRAFT
+  DRAFT --&gt; RESERVING
+  RESERVING --&gt; AWAITING_PAYMENT
+  RESERVING --&gt; FAILED
+  AWAITING_PAYMENT --&gt; ISSUING
+  AWAITING_PAYMENT --&gt; EXPIRED
+  ISSUING --&gt; TICKETED
+  ISSUING --&gt; MANUAL_REVIEW
+  MANUAL_REVIEW --&gt; TICKETED
+  MANUAL_REVIEW --&gt; FAILED
+  TICKETED --&gt; CANCEL_PENDING
+  CANCEL_PENDING --&gt; CANCELLED
+  CANCEL_PENDING --&gt; TICKETED</code></pre>
+<p>Đây là các nhánh chính, không thay thế bảng transition có guard trong code. DRAFT có thể bị hủy/lỗi trước khi trả tiền. Trạng thái tiền thuộc Payment: PENDING → SUCCEEDED/FAILED/EXPIRED; sau thành công có REFUND_PENDING/PARTIALLY_REFUNDED/REFUNDED. Không chuyển payment thành FAILED khi xuất vé lỗi.</p>
+<h3>Xử lý lỗi bắt buộc</h3>
+<div class="table-wrap"><table>
+<tr><td>Tình huống</td><td>Hành vi hệ thống</td></tr>
+<tr><td>Offer hết hạn hoặc giá tăng</td><td>Reprice, tạo quote mới, cần khách xác nhận; không âm thầm thu thêm</td></tr>
+<tr><td>Webhook trùng/đến sai thứ tự</td><td>Xác minh chữ ký raw body; unique(provider,event_id); state transition có guard; tra cứu provider nếu không rõ</td></tr>
+<tr><td>Callback frontend báo thành công</td><td>Chỉ hiển thị đang xác minh; không dùng redirect làm bằng chứng đã nhận tiền</td></tr>
+<tr><td>Thanh toán đến sau khi booking hết hạn</td><td>Không tự xuất vé bằng offer cũ; đối soát, refund hoặc xin khách chấp nhận quote mới</td></tr>
+<tr><td>Supplier timeout khi tạo order/xuất vé</td><td>Đặt UNKNOWN/MANUAL_REVIEW; tra cứu bằng request key/order ref trước khi retry để tránh vé trùng</td></tr>
+<tr><td>Đã thu tiền nhưng xuất vé thất bại chắc chắn</td><td>Ghi lý do, tạo refund saga và thông báo; không báo đã có vé</td></tr>
+<tr><td>Chỉ xuất được một phần hành khách</td><td>MANUAL_REVIEW, ghi từng ticket; không gắn TICKETED cho toàn booking khi thiếu vé</td></tr>
+<tr><td>Ghế bị người khác lấy</td><td>Supplier reject; đề nghị ghế khác, hoàn phí dịch vụ nếu cần; unique nội bộ chỉ ngăn xung đột trong booking</td></tr>
+<tr><td>Hủy vé thành công, hoàn tiền thất bại</td><td>Booking vẫn CANCELLED; refund ở FAILED/MANUAL_REVIEW, nhân viên xử lý tiếp</td></tr>
+<tr><td>Đổi vé cần trả thêm</td><td>Quote có hạn → khách xác nhận → payment purpose CHANGE → đổi vé; bảo toàn snapshot và lịch sử vé cũ</td></tr>
+</table></div>
+<p>Coupon dùng reserve/commit/release với TTL. Kiểm tra usage_limit/per_user_limit trong transaction khóa promotion; release khi booking hết hạn. Tổng refund dùng transaction khóa payment; kiểm tra tổng REQUESTED/PROCESSING/SUCCEEDED không vượt số đã thu, không chỉ kiểm tra từng dòng.</p>
+<h2>5. Event reliability và consistency</h2>
+<p>PostgreSQL transaction bảo vệ một service; không có distributed transaction qua RabbitMQ. Dùng outbox/inbox, consumer idempotent, manual ack sau commit, retry có backoff và dead-letter queue. Outbox publish rồi mới đánh dấu published; crash ở giữa có thể phát trùng, consumer phải chịu được.</p>
+<p>Envelope chuẩn: <code>eventId</code>, <code>eventType</code>, <code>eventVersion</code>, <code>aggregateId</code>, <code>aggregateVersion</code>, <code>occurredAt</code>, <code>correlationId</code>, <code>causationId</code>, <code>producer</code>, <code>payload</code>. DDL outbox lưu phần payload/envelope cần thiết; khi publish thêm producer/causationId từ metadata trong payload. Event không chứa passport hay refresh token. Payload có version; không sửa phá vỡ consumer cũ.</p>
+<p>Event chính: <code>booking.created</code>, <code>booking.payment_requested</code>, <code>payment.succeeded</code>, <code>payment.failed</code>, <code>booking.ticketed</code>, <code>booking.issue_failed</code>, <code>booking.expired</code>, <code>booking.cancelled</code>, <code>refund.requested</code>, <code>refund.succeeded</code>, <code>refund.failed</code>, <code>promotion.reserved</code>, <code>support.handoff_requested</code>. Cùng một aggregate dùng version để phát hiện stale events; không dựa vào thứ tự toàn cục của broker. Booking là orchestrator saga; từng command ghi idempotency key và side-effect result để retry an toàn.</p>
+<h2>6. Thiết kế chatbot AI</h2>
+<p>AI là lớp điều phối hội thoại. Giá và tình trạng vé phải lấy qua domain tool; chính sách lấy từ tài liệu đã duyệt, có nguồn và ngày hiệu lực. RAG không được dùng để đoán giá/chỗ hiện tại.</p>
+<p>Ví dụ: “Tìm vé Hà Nội đi Đà Nẵng tối thứ Sáu tuần sau, dưới 3 triệu, có hành lý”. AI làm rõ thiếu ngày hoặc số khách, quy đổi ngày theo timezone người dùng, hiển thị ngày tuyệt đối trước khi tìm; gọi <code>search_flights</code>, trả flight cards và link chọn offer.</p>
+<div class="table-wrap"><table>
+<tr><td>Tool</td><td>Kiểu</td><td>Điều kiện thực thi</td></tr>
+<tr><td>search_flights / reprice_offer</td><td>Đọc</td><td>Input có schema, deadline, giới hạn số kết quả</td></tr>
+<tr><td>search_policies</td><td>Đọc</td><td>Chỉ tài liệu PUBLISHED, đúng audience/hãng/ngày; kèm citation</td></tr>
+<tr><td>get_my_bookings / get_booking_status</td><td>Đọc cá nhân</td><td>Server tự lấy userId từ auth context; kiểm tra sở hữu từng booking</td></tr>
+<tr><td>quote_change / quote_cancellation</td><td>Đọc cá nhân</td><td>Trả chi phí, điều kiện và quote expiry; chưa thực hiện thay đổi</td></tr>
+<tr><td>prepare_booking</td><td>Chuẩn bị</td><td>Tạo draft gắn user; hiển thị hành trình, giá và điều khoản</td></tr>
+<tr><td>confirm_booking / confirm_change / confirm_cancel</td><td>Ghi</td><td>Token xác nhận một lần gắn user, quote hash, hành động, expiry; khách bấm xác nhận rõ ràng</td></tr>
+<tr><td>create_support_case / handoff</td><td>Ghi</td><td>Khách đồng ý gửi nội dung cần thiết; có audit</td></tr>
+</table></div>
+<p>Vòng lặp: nhận message → kiểm tra quyền và budget → model đề xuất tool với JSON Schema strict → backend validate bằng Zod/class-validator → policy authorization → thực thi tool → trả kết quả tool → model diễn giải → lưu citations và tool audit. Strict schema giúp cấu trúc đầu vào; không thay thế authorization hoặc kiểm tra nghiệp vụ.</p>
+<p>Backend không chấp nhận <code>user_id</code>, số tiền hoặc trạng thái “đã thanh toán” do model tự đưa ra. Không cho model chạy SQL, truy cập secret hoặc gọi HTTP tùy ý. Nội dung retrieved là dữ liệu không tin cậy; bỏ chỉ dẫn yêu cầu vượt quyền nằm trong tài liệu. Mask PII trước khi gửi LLM; không gửi passport đầy đủ, token hay thông tin thẻ. Giới hạn số tool call/token, timeout, log đã redaction và tắt tool ghi khi mất xác thực.</p>
+<p>Tri thức: upload PDF/HTML → scan/parse → tạo version DRAFT → chunk + embedding → retrieval test → nhân viên duyệt → PUBLISHED. Lưu document/version/source; lọc ngày hiệu lực trước khi trả lời. Nếu thiếu nguồn hoặc mâu thuẫn, AI nói rõ và chuyển CSKH. Dùng pgvector tùy chọn; dimension trong optional-vector.sql là cấu hình 1536 của thiết kế, phải khớp model embedding đã chọn.</p>
+<p>SSE dùng cho token stream và tool progress; reconnect với cursor cho message/status. CSKH nhận support case và conversation context qua event, sau đó phát tin nhắn agent qua kênh hội thoại. Khi status HANDOFF, bot dừng tự trả lời trừ thông báo hệ thống.</p>
+<h2>7. Thư viện và hạ tầng đề xuất</h2>
+<p>Đây là bộ lựa chọn kiến trúc, không khóa phiên bản giả định. Khi khởi tạo repository, chọn các bản stable tương thích tại thời điểm cài, pin lockfile và ghi Node engine. Kiểm tra tài liệu migration của Prisma/Nest trước khi nâng major.</p>
+<div class="table-wrap"><table>
+<tr><td>Lớp</td><td>Thư viện / công cụ</td><td>Mục đích</td></tr>
+<tr><td>Monorepo</td><td>pnpm workspaces + Turborepo</td><td>Chạy build/lint/dev theo dependency graph</td></tr>
+<tr><td>Frontend</td><td>React, TypeScript, Vite, react-router</td><td>SPA khách hàng và admin</td></tr>
+<tr><td>Server state</td><td>@tanstack/react-query</td><td>Cache request, invalidation, retry có chọn lọc</td></tr>
+<tr><td>Form</td><td>react-hook-form, zod, @hookform/resolvers</td><td>Validate form và lỗi field</td></tr>
+<tr><td>UI</td><td>tailwindcss, shadcn/ui, lucide-react</td><td>Design tokens và accessible primitives; shadcn là component source</td></tr>
+<tr><td>State cục bộ</td><td>zustand</td><td>Search draft, booking wizard; không lưu token ở localStorage</td></tr>
+<tr><td>Tiện ích</td><td>date-fns, date-fns-tz, i18next, react-i18next</td><td>Timezone và ngôn ngữ; Intl.NumberFormat cho giá</td></tr>
+<tr><td>Admin</td><td>@tanstack/react-table, recharts</td><td>Table/filter/chart; aggregate dữ liệu server</td></tr>
+<tr><td>Backend</td><td>@nestjs/common/core/config/platform-express</td><td>Cấu trúc service và dependency injection</td></tr>
+<tr><td>API</td><td>@nestjs/swagger, class-validator, class-transformer</td><td>OpenAPI và validation DTO</td></tr>
+<tr><td>Auth</td><td>@nestjs/jwt, jose, argon2</td><td>JWT ký bất đối xứng, password hash; key rotation qua JWKS</td></tr>
+<tr><td>Data</td><td>prisma, @prisma/client, @prisma/adapter-pg, pg</td><td>Client/migration riêng mỗi service; setup adapter theo version đã chọn</td></tr>
+<tr><td>Messaging</td><td>@nestjs/microservices, amqplib, amqp-connection-manager</td><td>RabbitMQ transporter; manual ack/durable queues</td></tr>
+<tr><td>Jobs/cache</td><td>ioredis, bullmq, @nestjs/bullmq</td><td>Cache TTL, scheduler cleanup, delivery retry; Redis không làm nguồn tồn chỗ</td></tr>
+<tr><td>AI</td><td>openai, zod, pg</td><td>Tool loop trực tiếp; LangChain chưa cần ở MVP</td></tr>
+<tr><td>Object storage</td><td>@aws-sdk/client-s3</td><td>E-ticket, tài liệu tri thức; signed URL có hạn</td></tr>
+<tr><td>Email</td><td>nodemailer hoặc SDK nhà cung cấp</td><td>Sandbox email ở local, provider thật ở production</td></tr>
+<tr><td>Quan sát</td><td>nestjs-pino, pino, OpenTelemetry, Prometheus/Grafana</td><td>Structured logs, tracing gateway→supplier, metrics</td></tr>
+<tr><td>Kiểm thử</td><td>Vitest/Testing Library, Jest hoặc Vitest backend, Supertest, Playwright, Testcontainers</td><td>Unit nghiệp vụ, integration PostgreSQL/RabbitMQ, E2E</td></tr>
+<tr><td>Local infra</td><td>Docker Compose: PostgreSQL, Redis, RabbitMQ, MinIO, Mailpit</td><td>Phát triển; mock supplier và payment adapter</td></tr>
+</table></div>
+<p>Payment chọn một provider phù hợp khả năng merchant tại thị trường triển khai: VNPay hoặc MoMo là ứng viên cho Việt Nam; hosted checkout của provider nếu hỗ trợ. Stripe chỉ là ví dụ tham chiếu webhook, không mặc định coi merchant Việt Nam được mở tài khoản. Không lưu PAN/CVV; redirect/hosted payment thuộc provider. Các phương thức trong ảnh là mục tiêu UX, chỉ bật khi hợp đồng và API hỗ trợ.</p>
+<h2>8. Cấu trúc repository</h2>
+<div class="table-wrap"><table>
+<tr><td>Đường dẫn</td><td>Nội dung</td></tr>
+<tr><td>apps/web</td><td>React khách hàng, feature folders: auth/search/booking/trips/chat/account</td></tr>
+<tr><td>apps/admin</td><td>React admin và CSKH, permission-based routes</td></tr>
+<tr><td>apps/api-gateway</td><td>Routing, auth boundary, OpenAPI, SSE</td></tr>
+<tr><td>apps/identity-service</td><td>Modules và prisma/migrations của identity</td></tr>
+<tr><td>apps/flight-service</td><td>Catalog, search, pricing, adapters, prisma/migrations</td></tr>
+<tr><td>apps/booking-service</td><td>Booking aggregate, saga, supplier order/ticket adapters</td></tr>
+<tr><td>apps/payment-service</td><td>Checkout, webhook, refund, reconciliation</td></tr>
+<tr><td>apps/engagement-service</td><td>Coupon và CMS</td></tr>
+<tr><td>apps/notification-service</td><td>In-app và email worker</td></tr>
+<tr><td>apps/assistant-service</td><td>Conversations, tools, retrieval, model adapter</td></tr>
+<tr><td>apps/support-service</td><td>Cases, inbox và audit</td></tr>
+<tr><td>packages/contracts</td><td>DTO công khai, event schema/version, error codes; không export Prisma entities</td></tr>
+<tr><td>packages/ui</td><td>Components/tokens dùng chung React</td></tr>
+<tr><td>packages/config</td><td>ESLint, tsconfig, test config</td></tr>
+<tr><td>infra/compose</td><td>Local database/broker/cache; env.example không chứa secret</td></tr>
+<tr><td>docs</td><td>Quyết định kiến trúc, API, schema và screen catalog</td></tr>
+</table></div>
+<p>Mỗi service có Dockerfile và pipeline riêng; monorepo không đồng nghĩa chung runtime hay chung database client. Tránh shared package chứa nghiệp vụ để service không bị ràng buộc triển khai đồng thời.</p>
+<h2>9. API baseline</h2>
+<p>Tất cả đường dưới đây thêm prefix <code>/api/v1</code>. User ID lấy từ auth context. OpenAPI là hợp đồng frontend; lỗi trả <code>{code,message,fieldErrors,requestId}</code>. Các mutation tiền/booking/đổi/hủy cần <code>Idempotency-Key</code>; cùng key khác payload trả conflict. Cursor opaque encode <code>(createdAt,id)</code> với limit mặc định 20, tối đa 100 cho danh sách cá nhân.</p>
+<div class="table-wrap"><table>
+<tr><td>Nhóm</td><td>API chính</td></tr>
+<tr><td>Auth</td><td>POST /auth/register, /auth/login, /auth/verify-email, /auth/forgot-password, /auth/reset-password, /auth/refresh, /auth/logout</td></tr>
+<tr><td>Hồ sơ</td><td>GET/PATCH /me; GET /me/sessions; DELETE /me/sessions/:id; CRUD /me/travelers</td></tr>
+<tr><td>Flights</td><td>GET /airports?q=; POST /flight-searches; GET /flight-searches/:id/offers; GET /offers/:id; POST /offers/:id/reprice; GET /offers/:id/seat-map</td></tr>
+<tr><td>Booking wizard</td><td>POST /bookings; PATCH /bookings/:id/passengers; PATCH /bookings/:id/ancillaries; POST /bookings/:id/confirm</td></tr>
+<tr><td>Thanh toán</td><td>POST /bookings/:id/payments; GET /payments/:id; POST /webhooks/payments/:provider</td></tr>
+<tr><td>Trips</td><td>GET /me/bookings; GET /bookings/:id; GET /bookings/:id/tickets/:ticketId/download; GET /bookings/:id/events (SSE)</td></tr>
+<tr><td>Đổi/hủy</td><td>POST /bookings/:id/change-quotes; POST /bookings/:id/cancel-quotes; POST /change-requests/:id/confirm</td></tr>
+<tr><td>Chat</td><td>POST /conversations; GET /conversations/:id/messages; POST /conversations/:id/messages; GET /conversations/:id/events; POST /tool-calls/:id/confirm</td></tr>
+<tr><td>Tương tác</td><td>GET /promotions; POST /bookings/:id/promotion; GET /me/notifications; PATCH /me/notifications/:id/read</td></tr>
+<tr><td>CSKH</td><td>POST /support/cases; GET /me/support/cases; GET/POST /support/cases/:id/messages; POST /conversations/:id/handoff</td></tr>
+<tr><td>Admin</td><td>GET /admin/dashboard; GET /admin/bookings; GET /admin/payments; GET /admin/refunds; POST /admin/refunds/:id/approve; CRUD /admin/users, /admin/roles, /admin/promotions, /admin/content; GET/PATCH /admin/support/cases/:id; CRUD /admin/knowledge; POST /admin/knowledge/:id/publish; GET/PATCH /admin/suppliers/:id</td></tr>
+</table></div>
+<p>Admin API cần permission cụ thể và audit. Đọc dữ liệu khách theo support case scope; không cho role SUPPORT đổi role user hoặc duyệt refund nếu thiếu quyền. Endpoint download trả signed URL sau ownership check, không public object key.</p>
+<h2>10. Quy tắc dữ liệu và vận hành</h2>
+<p>44 bảng nghiệp vụ + 16 inbox/outbox = 60 bảng trong 8 schema. DDL là baseline; các CHECK/FK/UNIQUE bảo vệ dữ liệu cục bộ. Các tổng số tiền xuyên dòng, tính hợp lệ ADT/CHD/INF theo ngày bay, trẻ sơ sinh gắn đúng người lớn, tối đa hành khách, quorum xuất đủ vé, payment transition và supplier rule phải kiểm tra ở service transaction và integration test.</p>
+<p><code>updated_at</code> được trigger tự cập nhật. Cursor index cho bookings/messages/notifications. Payment provider event dedup bằng unique key. TTL cleanup xóa offer segment trước offer/search hoặc dùng migration retention phù hợp; booking giữ snapshot nên không bị ảnh hưởng. Không xóa booking/ticket/payment lịch sử bằng cascade.</p>
+<p>Auth: refresh token hash trong DB, cookie HttpOnly/Secure/SameSite cấu hình theo deployment, CSRF protection cho mutation dùng cookie; access token ngắn hạn chỉ giữ trong memory nếu dùng bearer. Validate issuer/audience/expiry; kiểm tra session revoke cho hành động nhạy cảm. Mã OTP/reset có hạn, một lần, giới hạn attempts và rate limit theo user/IP. OAuth dùng authorization code + PKCE/state/nonce theo provider. CORS allowlist, HTTPS, secret manager và rotation.</p>
+<p>Tách dữ liệu hồ sơ mã hóa, transcript đã redaction và audit. Log không ghi token, passport hay thông tin thẻ. RBAC database deny UPDATE/DELETE cho audit role; application role không được coi là bằng chứng audit bất biến nếu còn quyền owner. Lập retention theo chính sách vận hành/địa phương trước production; không tự gán thời hạn pháp lý trong mẫu.</p>
+<p>Metrics: search latency/error theo supplier, reprice mismatch, payment verification delay, ticket issuance latency, số booking MANUAL_REVIEW, outbox lag, DLQ depth, refund pending, AI tool error/hallucination đánh giá trên tập test có nhãn. Có timeout và circuit breaker supplier, backup database, restore drill và runbook xử lý tiền đã thu nhưng chưa có vé.</p>
+<h2>11. Lộ trình triển khai để học và xây dựng</h2>
+<p>1. Khởi tạo monorepo + Compose, contract conventions, logs và migrations. Tạo tất cả service skeleton nhưng chỉ bật service cần cho vertical slice.</p>
+<p>2. Identity và Flight với mock supplier: login → search → detail; frontend bám template 01–08.</p>
+<p>3. Booking + Payment sandbox: passenger → reprice → checkout → webhook → ticket giả có nhãn DEMO. Chưa dùng tiền thật.</p>
+<p>4. Outbox/inbox, retry/DLQ và integration tests cho duplicate webhook, supplier timeout, payment đến muộn, refund giới hạn và hai request xác nhận đồng thời.</p>
+<p>5. AI search + RAG read-only trước; đo chất lượng rồi thêm draft/confirm tools. Kiểm thử truy cập booking người khác và prompt injection từ tài liệu.</p>
+<p>6. My trips, admin, coupon, CSKH và notification. Đổi/hủy là yêu cầu xử lý thủ công trước nếu provider chưa hỗ trợ tự động.</p>
+<p>7. Ký hợp đồng supplier/payment, live adapter, đối soát và pilot giới hạn trước mở production. Tính năng đổi/hủy/chọn ghế phải dựa vào capability thực tế của adapter.</p>
+<h2>12. Nguồn tham khảo chính thức</h2>
+<p>Đã đối chiếu ngày 11/11/2026. Các lựa chọn kiến trúc ở trên là đề xuất cho Skyvia, không phải yêu cầu bắt buộc của các thư viện.</p>
+<p>- NestJS RabbitMQ transporter: https://docs.nestjs.com/microservices/rabbitmq</p>
+<p>- React + build tools/Vite: https://react.dev/learn/build-a-react-app-from-scratch</p>
+<p>- Amadeus Flight APIs: https://github.com/amadeus4dev/developer-guides/blob/master/docs/resources/flights.md</p>
+<p>- Amadeus production/ticket issuance requirements: https://amadeus4dev.github.io/developer-guides/faq/</p>
+<p>- OpenAI function calling / strict schema: https://developers.openai.com/api/docs/guides/function-calling</p>
+<p>- Webhook signature, duplicate và unordered delivery: https://docs.stripe.com/webhooks</p>
+<p>- PostgreSQL constraints: https://www.postgresql.org/docs/current/ddl-constraints.html</p>
+<p>- pgvector: https://github.com/pgvector/pgvector</p>
+<p>Amadeus Self-Service Flight Create Orders production yêu cầu hợp đồng consolidator để xuất vé theo FAQ; adapter/provider khác có điều kiện riêng. API tìm kiếm hoặc sandbox hoạt động không đồng nghĩa hệ thống đã được phép xuất vé thật.</p></article><article id="doc2"><h1>Bộ màn hình Skyvia</h1>
+<p>32 màn hình chính trong phạm vi đã định. Ảnh được chia 4 board, mỗi board 8 màn hình desktop. Route, tên trường và hành vi trong tài liệu này là đặc tả để code; hình chỉ minh họa bố cục, chữ nhỏ trong ảnh có thể khác.</p>
+<h2>Design system</h2>
+<p>- Canvas desktop 1440px, max-width nội dung 1200px; grid 12 cột; form/summary 8:4. Admin sidebar 240px.</p>
+<p>- Font Inter hoặc Be Vietnam Pro. Body 16px, secondary 14px, H1 32–40px; line-height 1.5. Spacing 4/8/12/16/24/32/48; card radius 12px.</p>
+<p>- Primary #2563EB; ink #0F172A; page #F8FAFC; border #E2E8F0; success #15803D; warning #B45309; danger #B91C1C. Kiểm tra contrast trên component thực tế, không chỉ theo token.</p>
+<p>- Button cao 44px; label luôn hiện ngoài input; error text dưới field; focus ring rõ; dialog giữ focus; toast không thay thế thông báo lỗi trong form.</p>
+<p>- Giá luôn có currency và phân biệt tổng đơn với mỗi khách; giờ bay kèm sân bay/timezone khi khác vùng; hiển thị ngày tuyệt đối trong xác nhận AI.</p>
+<p>- Trạng thái chung cho mỗi trang dữ liệu: loading skeleton, empty state với CTA phù hợp, lỗi + retry, offline, session expired; admin có forbidden, chat có provider timeout.</p>
+<p>- Responsive: dưới 768px dùng một cột, filter drawer, sticky CTA và summary thu gọn. UI chỉ cho bước tiếp theo khi dữ liệu đã được server xác nhận; back/refresh phục hồi draft thuộc user.</p>
+<h2>Nhóm 1 — Khám phá và tài khoản</h2>
+<div class="table-wrap"><table>
+<tr><td>ID / màn hình</td><td>Route React</td><td>Thành phần và dữ liệu</td><td>CTA / trạng thái đặc thù</td></tr>
+<tr><td>01 Trang chủ</td><td><code>/</code></td><td>Header, search form một chiều/khứ hồi; sân bay đi/đến; ngày; ADT/CHD/INF; cabin; ưu đãi; AI launcher</td><td>Tìm chuyến; swap sân bay; lỗi ngày về trước ngày đi; không chọn cùng sân bay</td></tr>
+<tr><td>02 Kết quả tìm kiếm</td><td><code>/flights?searchId=</code></td><td>Search summary, date strip, filter hãng/giờ/điểm dừng/hành lý/giá; cards offer cả hành trình; sort; nguồn giá và expiry</td><td>Chọn offer; no result; partial supplier failure; reprice khi hết TTL; không hardcode giá</td></tr>
+<tr><td>03 Chi tiết chuyến</td><td><code>/flights/offers/:offerId</code></td><td>Chặng đi/về, layover, cabin/fare brand, fare rules, baggage, thuế/phí, capability chọn ghế</td><td>Tiếp tục; so sánh hạng; giá đổi cần chấp nhận lại; supplier không hỗ trợ tính năng thì ẩn/giải thích</td></tr>
+<tr><td>04 Đăng nhập</td><td><code>/login</code></td><td>Email, password, show/hide, Google nếu đã cấu hình, quên mật khẩu, link đăng ký</td><td>Đăng nhập; lỗi thông tin chung; tài khoản blocked/unverified; giữ returnTo an toàn</td></tr>
+<tr><td>05 Đăng ký</td><td><code>/register</code></td><td>Họ tên, email, password, xác nhận password, điều khoản có version</td><td>Tạo tài khoản; strength và lỗi field; chuyển verify; không tự đăng ký nhận marketing</td></tr>
+<tr><td>06 Xác minh email</td><td><code>/verify-email</code></td><td>OTP 6 số, email masked, thời gian còn lại, resend cooldown</td><td>Xác minh/gửi lại; sai mã, quá số lần, expired, verified; paste OTP accessible</td></tr>
+<tr><td>07 Quên mật khẩu</td><td><code>/forgot-password</code></td><td>Email form, trạng thái đã gửi hướng dẫn</td><td>Gửi liên kết; cùng thông báo với email có/không tồn tại; rate limit</td></tr>
+<tr><td>08 Đặt mật khẩu mới</td><td><code>/reset-password?token=</code></td><td>Password và confirm, link token, success panel</td><td>Lưu; token invalid/expired/used; thu hồi session theo chính sách; quay login</td></tr>
+</table></div>
+<h2>Nhóm 2 — Đặt vé và thanh toán</h2>
+<div class="table-wrap"><table>
+<tr><td>ID / màn hình</td><td>Route React</td><td>Thành phần và dữ liệu</td><td>CTA / trạng thái đặc thù</td></tr>
+<tr><td>09 Hành khách</td><td><code>/booking/:id/passengers</code></td><td>Stepper, form từng ADT/CHD/INF, saved travelers, họ tên đúng giấy tờ, birth date/nationality/document theo supplier, email/phone liên hệ, summary</td><td>Lưu và tiếp tục; kiểm tra tuổi vào ngày bay và liên kết infant với adult; không copy PII vào URL/log</td></tr>
+<tr><td>10 Chọn ghế</td><td><code>/booking/:id/seats</code></td><td>Map theo segment và cabin, legend/giá, passenger tabs, ghế đã chọn, điều kiện supplier</td><td>Xác nhận lựa chọn hoặc bỏ qua nếu cho phép; unavailable, map không hỗ trợ, seat rejected; không khẳng định đã giữ ghế trước supplier confirm</td></tr>
+<tr><td>11 Hành lý &amp; dịch vụ</td><td><code>/booking/:id/extras</code></td><td>Hành lý theo khách/chặng, meal, included allowance, tổng phí từng mục</td><td>Thêm/bỏ dịch vụ, tiếp tục; optional không tick sẵn; capability phụ thuộc supplier</td></tr>
+<tr><td>12 Kiểm tra đặt vé</td><td><code>/booking/:id/review</code></td><td>Chặng/khách/seat/extras, giá breakdown, coupon, điều kiện đổi/hủy có version, countdown thực, checkbox đồng ý</td><td>Xác nhận và thanh toán; reprice diff phải xác nhận mới; hold chỉ hiển thị nếu supplier đã xác nhận</td></tr>
+<tr><td>13 Thanh toán</td><td><code>/booking/:id/payment</code></td><td>Order reference, tổng/currency, provider method đã bật, QR/redirect hosted checkout, deadline, trạng thái xác minh</td><td>Thanh toán/đổi phương thức; không thu PAN/CVV trong form tự làm; không tạo payment mới khi chỉ refresh trang</td></tr>
+<tr><td>14 Đang xử lý</td><td><code>/booking/:id/processing</code></td><td>Payment verification → payment received → issuing → issued, trạng thái SSE/poll fallback, link hỗ trợ</td><td>Chờ/tra cứu lại; payment chưa xác minh, supplier pending, manual review; không báo ticket success khi chỉ có redirect</td></tr>
+<tr><td>15 Đặt vé thành công</td><td><code>/booking/:id/success</code></td><td>Booking ref, airline PNR, ticket từng khách, journey summary, hóa đơn/biên nhận theo hỗ trợ, download e-ticket</td><td>Xem vé/tải PDF; chỉ hiện thành công khi đã có ticket đủ; download qua ownership check</td></tr>
+<tr><td>16 Thanh toán lỗi/hết hạn</td><td><code>/booking/:id/payment-status</code></td><td>Biến thể FAILED, EXPIRED, thanh toán muộn đang đối soát; hướng dẫn và số hỗ trợ</td><td>Thử lại nếu booking còn hợp lệ hoặc tìm chuyến mới; không retry thu tiền khi provider status UNKNOWN</td></tr>
+</table></div>
+<h2>Nhóm 3 — Chuyến đi và AI</h2>
+<div class="table-wrap"><table>
+<tr><td>ID / màn hình</td><td>Route React</td><td>Thành phần và dữ liệu</td><td>CTA / trạng thái đặc thù</td></tr>
+<tr><td>17 Vé của tôi</td><td><code>/trips</code></td><td>Tabs sắp tới/đã qua/đã hủy; card hành trình, passengers count, ticket/payment status; cursor pagination</td><td>Xem chi tiết; empty CTA tìm vé; render riêng pending và ticketed</td></tr>
+<tr><td>18 Chi tiết đặt vé</td><td><code>/trips/:id</code></td><td>Snapshot chặng/khách, ticket/coupon, payment/refund, timeline, fare rules; signed download</td><td>Đổi/hủy nếu hợp lệ, hỏi AI, tạo case; 403 nếu không sở hữu; ghi rõ vé đang xử lý</td></tr>
+<tr><td>19 Đổi chuyến</td><td><code>/trips/:id/change</code></td><td>Chọn phạm vi/khách theo supplier; itinerary cũ và quote mới; fare difference, phí, quote expiry; confirm dialog</td><td>Quote → xác nhận → trả thêm nếu cần → processing; không hỗ trợ tự động thì gửi case</td></tr>
+<tr><td>20 Hủy &amp; hoàn tiền</td><td><code>/trips/:id/cancel</code></td><td>Điều kiện, phạm vi khách/chặng, cancellation fee, refund amount/currency, phương thức gốc, quote expiry, lý do</td><td>Xác nhận hủy một lần; ineligible; manual request; canceled nhưng refund pending hiển thị tách biệt</td></tr>
+<tr><td>21 Hồ sơ &amp; bảo mật</td><td><code>/account?tab=</code></td><td>Tabs profile/travelers/security/sessions; personal form; masked documents; đổi mật khẩu; active sessions với revoke</td><td>Lưu/revoke; xác nhận hành động nhạy cảm; session hiện tại rõ; không gửi lại ciphertext về frontend</td></tr>
+<tr><td>22 Thông báo &amp; ưu đãi</td><td><code>/notifications?tab=</code></td><td>Tabs thông báo/ưu đãi; read state, booking links; coupon code, điều kiện, expiry</td><td>Đánh dấu đã đọc/sử dụng ưu đãi; empty; expired coupon không áp dụng</td></tr>
+<tr><td>23 Chatbot AI</td><td><code>/assistant/:conversationId?</code></td><td>History, streaming chat, suggested prompts, offer cards, source citations, trip context, confirmation card, stop/regenerate, feedback, handoff</td><td>Gửi tin/chọn offer/xác nhận/chuyển nhân viên; không tự submit payment; hết budget, timeout và stale quote có thông báo</td></tr>
+<tr><td>24 Trung tâm hỗ trợ</td><td><code>/help?tab=</code></td><td>FAQ search, category, support form liên kết booking, case history và thread, attachments theo allowlist</td><td>Tạo case/gửi reply; ticket open/resolved; chat handoff; internal notes không xuất hiện</td></tr>
+</table></div>
+<h2>Nhóm 4 — Quản trị và CSKH</h2>
+<div class="table-wrap"><table>
+<tr><td>ID / màn hình</td><td>Route React</td><td>Thành phần và dữ liệu</td><td>CTA / trạng thái đặc thù</td></tr>
+<tr><td>25 Dashboard</td><td><code>/admin</code></td><td>KPIs, date/currency filters, booking funnel, revenue vs refunds phân biệt, issuance pending, supplier health</td><td>Drilldown theo số liệu; empty/no permission; không cộng thẳng doanh thu khác currency</td></tr>
+<tr><td>26 Quản lý đặt vé</td><td><code>/admin/bookings/:id?</code></td><td>Search ref/PNR, status/date/supplier filters, paginated table, detail drawer/timeline, failed issuance queue</td><td>Investigate/manual retry sau supplier lookup, tạo case; mutation cần reason và audit</td></tr>
+<tr><td>27 Danh mục &amp; supplier</td><td><code>/admin/catalog?tab=</code></td><td>Airports, airlines, routes, supplier capabilities/mode/health; form cập nhật; đồng bộ danh mục</td><td>Lưu/sync; phân biệt mock/sandbox/live; secret chỉ là masked reference, không lộ giá trị</td></tr>
+<tr><td>28 Giao dịch &amp; hoàn tiền</td><td><code>/admin/payments?tab=</code></td><td>Payment/refund/reconciliation tabs, provider ref, amount/currency, detail, reason và lịch sử</td><td>Duyệt refund nếu có quyền; không đánh dấu success thủ công thay provider; pending/failed có task</td></tr>
+<tr><td>29 Khách hàng &amp; phân quyền</td><td><code>/admin/users?tab=</code></td><td>User table/profile, account status, role bindings, permission matrix, revoke sessions</td><td>Block/unblock/revoke/assign role; chống tự nâng quyền và audit trước/sau</td></tr>
+<tr><td>30 Ưu đãi &amp; nội dung</td><td><code>/admin/content?tab=</code></td><td>Coupon form, quota/date/minimum/cap, content/banner draft/published/preview, terms version</td><td>Lưu nháp/publish/archive; invalid date hoặc vượt quota; sanitize nội dung hiển thị</td></tr>
+<tr><td>31 Hộp thư CSKH</td><td><code>/admin/support/:caseId?</code></td><td>Queue filter priority/assignment; thread giữa; booking context phải; internal note toggle; AI handoff context</td><td>Nhận case/trả lời/escalate/resolve; assigned agent concurrency; note nội bộ khác reply khách</td></tr>
+<tr><td>32 Tri thức AI &amp; cấu hình</td><td><code>/admin/ai?tab=</code></td><td>Documents/version/status/audience/effective dates, retrieval test+citations, evaluations/tool error metrics; integrations settings tab</td><td>Upload/index/test/publish/archive; failed indexing; model config secret refs; không publish tài liệu chưa duyệt</td></tr>
+</table></div>
+<h2>Điều hướng và quyền</h2>
+<p>Public: 01–08, FAQ của 24. CUSTOMER: 09–24, chỉ dữ liệu của mình. SUPPORT: 25/26/31 và phần đọc của 28/29 theo permission. ADMIN: 25–32 theo quyền chi tiết; không dùng một Boolean <code>isAdmin</code> cho mọi hành động.</p>
+<p>Các bước hành khách → ghế → extras → review → payment cần guards theo trạng thái booking server. Deep link vào success không làm thay đổi state. Sau logout xóa cache dữ liệu cá nhân trên React Query và reset draft local.</p>
+<h2>Các biến thể không tính thành màn hình mới</h2>
+<p>Calendar/date picker, passenger count popover, airport autocomplete, filter drawer, confirm/reprice/refund dialogs, 404/403, global session-expired modal, skeleton/empty/error, mobile navigation, file upload progress và toast. Các biến thể này phải được triển khai cùng component; bộ 32 màn hình không tuyên bố bao phủ mọi khả năng mở rộng trong tương lai.</p></article><article id="doc3"><h1>Quan hệ dữ liệu</h1>
+<h2>Quan hệ vật lý trong cùng service</h2>
+<div class="table-wrap"><table>
+<tr><td>Bảng con</td><td>Khóa ngoại / ràng buộc</td></tr>
+<tr><td><code>identity.user_roles</code></td><td><code>user_id uuid NOT NULL REFERENCES identity.users(id)</code></td></tr>
+<tr><td><code>identity.user_roles</code></td><td><code>role_id uuid NOT NULL REFERENCES identity.roles(id)</code></td></tr>
+<tr><td><code>identity.role_permissions</code></td><td><code>role_id uuid NOT NULL REFERENCES identity.roles(id)</code></td></tr>
+<tr><td><code>identity.role_permissions</code></td><td><code>permission_id uuid NOT NULL REFERENCES identity.permissions(id)</code></td></tr>
+<tr><td><code>identity.sessions</code></td><td><code>user_id uuid NOT NULL REFERENCES identity.users(id)</code></td></tr>
+<tr><td><code>identity.verification_tokens</code></td><td><code>user_id uuid NOT NULL REFERENCES identity.users(id)</code></td></tr>
+<tr><td><code>identity.oauth_accounts</code></td><td><code>user_id uuid NOT NULL REFERENCES identity.users(id)</code></td></tr>
+<tr><td><code>identity.travelers</code></td><td><code>user_id uuid NOT NULL REFERENCES identity.users(id)</code></td></tr>
+<tr><td><code>flight.routes</code></td><td><code>origin_id uuid NOT NULL REFERENCES flight.airports(id)</code></td></tr>
+<tr><td><code>flight.routes</code></td><td><code>destination_id uuid NOT NULL REFERENCES flight.airports(id)</code></td></tr>
+<tr><td><code>flight.offers</code></td><td><code>search_id uuid NOT NULL REFERENCES flight.searches(id)</code></td></tr>
+<tr><td><code>flight.offers</code></td><td><code>supplier_id uuid NOT NULL REFERENCES flight.suppliers(id)</code></td></tr>
+<tr><td><code>flight.offer_segments</code></td><td><code>offer_id uuid NOT NULL REFERENCES flight.offers(id)</code></td></tr>
+<tr><td><code>flight.offer_segments</code></td><td><code>origin_id uuid NOT NULL REFERENCES flight.airports(id)</code></td></tr>
+<tr><td><code>flight.offer_segments</code></td><td><code>destination_id uuid NOT NULL REFERENCES flight.airports(id)</code></td></tr>
+<tr><td><code>flight.offer_segments</code></td><td><code>airline_id uuid NOT NULL REFERENCES flight.airlines(id)</code></td></tr>
+<tr><td><code>booking.passengers</code></td><td><code>booking_id uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>booking.passengers</code></td><td><code>FOREIGN KEY(booking_id,associated_adult_id) REFERENCES booking.passengers(booking_id,id)</code></td></tr>
+<tr><td><code>booking.segments</code></td><td><code>booking_id uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>booking.ancillaries</code></td><td><code>booking_id uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>booking.ancillaries</code></td><td><code>FOREIGN KEY(booking_id,passenger_id) REFERENCES booking.passengers(booking_id,id)</code></td></tr>
+<tr><td><code>booking.ancillaries</code></td><td><code>FOREIGN KEY(booking_id,segment_id) REFERENCES booking.segments(booking_id,id)</code></td></tr>
+<tr><td><code>booking.price_lines</code></td><td><code>booking_id uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>booking.reservations</code></td><td><code>booking_id uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>booking.tickets</code></td><td><code>booking_id uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>booking.tickets</code></td><td><code>FOREIGN KEY(booking_id,passenger_id) REFERENCES booking.passengers(booking_id,id)</code></td></tr>
+<tr><td><code>booking.ticket_coupons</code></td><td><code>booking_id uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>booking.ticket_coupons</code></td><td><code>FOREIGN KEY(booking_id,ticket_id) REFERENCES booking.tickets(booking_id,id)</code></td></tr>
+<tr><td><code>booking.ticket_coupons</code></td><td><code>FOREIGN KEY(booking_id,segment_id) REFERENCES booking.segments(booking_id,id)</code></td></tr>
+<tr><td><code>booking.change_requests</code></td><td><code>booking_id uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>booking.status_history</code></td><td><code>booking_id uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>payment.refunds</code></td><td><code>payment_id uuid NOT NULL REFERENCES payment.payments(id)</code></td></tr>
+<tr><td><code>payment.reconciliation_cases</code></td><td><code>payment_id uuid REFERENCES payment.payments(id)</code></td></tr>
+<tr><td><code>engagement.promotion_redemptions</code></td><td><code>promotion_id uuid NOT NULL REFERENCES engagement.promotions(id)</code></td></tr>
+<tr><td><code>notification.delivery_attempts</code></td><td><code>notification_id uuid NOT NULL REFERENCES notification.notifications(id)</code></td></tr>
+<tr><td><code>assistant.messages</code></td><td><code>conversation_id uuid NOT NULL REFERENCES assistant.conversations(id)</code></td></tr>
+<tr><td><code>assistant.tool_calls</code></td><td><code>conversation_id uuid NOT NULL REFERENCES assistant.conversations(id)</code></td></tr>
+<tr><td><code>assistant.tool_calls</code></td><td><code>message_id uuid REFERENCES assistant.messages(id)</code></td></tr>
+<tr><td><code>assistant.knowledge_chunks</code></td><td><code>document_id uuid NOT NULL REFERENCES assistant.knowledge_documents(id)</code></td></tr>
+<tr><td><code>assistant.feedback</code></td><td><code>message_id uuid NOT NULL REFERENCES assistant.messages(id)</code></td></tr>
+<tr><td><code>support.messages</code></td><td><code>case_id uuid NOT NULL REFERENCES support.cases(id)</code></td></tr>
+</table></div>
+<h2>Tham chiếu logic giữa service</h2>
+<div class="table-wrap"><table>
+<tr><td>Nguồn</td><td>Đích / cardinality</td><td>Cách kiểm tra</td></tr>
+<tr><td>booking.bookings.user_id</td><td>identity.users.id; user 1:N bookings</td><td>JWT subject + Identity API khi cần</td></tr>
+<tr><td>booking.bookings.offer_id / supplier_id</td><td>flight.offers / suppliers; offer 1:N bookings</td><td>Flight reprice API; snapshot được giữ dù offer hết TTL</td></tr>
+<tr><td>booking.passengers.traveler_id</td><td>identity.travelers.id; traveler 1:N snapshots</td><td>Kiểm tra sở hữu khi sao chép</td></tr>
+<tr><td>payment.payments.booking_id / change_request_id</td><td>booking.bookings / change_requests; booking 1:N payments</td><td>Booking payment intent contract + event</td></tr>
+<tr><td>payment.refunds.change_request_id</td><td>booking.change_requests.id; request 1:N refunds</td><td>Saga + correlation ID</td></tr>
+<tr><td>engagement.promotion_redemptions.booking_id / user_id</td><td>booking / identity</td><td>API reserve/commit/release và event</td></tr>
+<tr><td>notification.notifications.user_id / booking_id</td><td>identity / booking</td><td>Events; dữ liệu tối thiểu</td></tr>
+<tr><td>assistant.conversations.user_id / booking_id</td><td>identity / booking</td><td>Auth + kiểm tra quyền tại Booking API</td></tr>
+<tr><td>support.cases.user_id / assigned_to / booking_id / conversation_id</td><td>identity / booking / assistant</td><td>API + event handoff; không join trực tiếp DB</td></tr>
+<tr><td>flight.searches.user_id</td><td>identity.users.id, nullable cho khách chưa đăng nhập</td><td>Server lấy JWT subject, không tin user_id từ body</td></tr>
+<tr><td>Các actor_id/requested_by/author_id</td><td>identity.users.id</td><td>Gateway + từng service xác thực quyền</td></tr>
+</table></div>
+<h2>Các quan hệ cốt lõi</h2>
+<pre><code>erDiagram
+  USERS ||--o{ BOOKINGS : &quot;logic: owns&quot;
+  BOOKINGS ||--|{ PASSENGERS : contains
+  BOOKINGS ||--|{ SEGMENTS : contains
+  PASSENGERS ||--o{ TICKETS : issued
+  TICKETS ||--|{ TICKET_COUPONS : covers
+  SEGMENTS ||--o{ TICKET_COUPONS : traveled
+  BOOKINGS ||--o{ PAYMENTS : &quot;logic: attempts&quot;
+  PAYMENTS ||--o{ REFUNDS : returns</code></pre>
+<pre><code>erDiagram
+  CONVERSATIONS ||--o{ MESSAGES : contains
+  CONVERSATIONS ||--o{ TOOL_CALLS : audits
+  MESSAGES ||--o{ FEEDBACK : receives
+  KNOWLEDGE_DOCUMENTS ||--o{ KNOWLEDGE_CHUNKS : splits
+  SUPPORT_CASES ||--o{ SUPPORT_MESSAGES : contains</code></pre>
+<p>Quan hệ trong hai sơ đồ rút gọn; bảng phía trên liệt kê ràng buộc đầy đủ. Các đường ghi logic không có FOREIGN KEY vật lý. Coupon và seat phải kiểm tra với supplier/service chủ sở hữu; không thể suy ra tồn chỗ toàn hệ thống từ database nội bộ.</p></article><article id="doc4"><h1>Database dictionary</h1>
+<p>60 bảng trong 8 schema. Trong đó 16 bảng inbox/outbox hạ tầng (2 bảng mỗi service); còn lại là bảng nghiệp vụ.</p>
+<p>Mọi <code>*_id</code> bên ngoài schema sở hữu là tham chiếu logic, trừ REFERENCES được ghi rõ. Tiền dùng bigint theo đơn vị nhỏ nhất của currency: VND = đồng; không dùng float. <code>timestamptz</code> lưu thời điểm; timezone IANA quyết định hiển thị. JSON không thay thế các khóa quan hệ cốt lõi.</p>
+<h2>identity.users</h2>
+<p>Tài khoản; email được chuẩn hóa lowercase trước khi ghi.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>email</code></td><td><code>text NOT NULL UNIQUE CHECK (email = lower(email))</code></td></tr>
+<tr><td><code>password_hash</code></td><td><code>text</code></td></tr>
+<tr><td><code>full_name</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>phone</code></td><td><code>text</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL DEFAULT &#x27;PENDING&#x27; CHECK (status IN (&#x27;PENDING&#x27;,&#x27;ACTIVE&#x27;,&#x27;BLOCKED&#x27;,&#x27;DELETED&#x27;))</code></td></tr>
+<tr><td><code>email_verified_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>updated_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>identity.roles</h2>
+<p>Vai trò hệ thống.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>code</code></td><td><code>text NOT NULL UNIQUE</code></td></tr>
+<tr><td><code>name</code></td><td><code>text NOT NULL</code></td></tr>
+</table></div>
+<h2>identity.permissions</h2>
+<p>Quyền theo hành động.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>code</code></td><td><code>text NOT NULL UNIQUE</code></td></tr>
+<tr><td><code>description</code></td><td><code>text NOT NULL</code></td></tr>
+</table></div>
+<h2>identity.user_roles</h2>
+<p>Quan hệ nhiều nhiều user-role.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>user_id</code></td><td><code>uuid NOT NULL REFERENCES identity.users(id)</code></td></tr>
+<tr><td><code>role_id</code></td><td><code>uuid NOT NULL REFERENCES identity.roles(id)</code></td></tr>
+<tr><td><code>PRIMARY</code></td><td><code>KEY(user_id,role_id)</code></td></tr>
+</table></div>
+<h2>identity.role_permissions</h2>
+<p>Quan hệ nhiều nhiều role-permission.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>role_id</code></td><td><code>uuid NOT NULL REFERENCES identity.roles(id)</code></td></tr>
+<tr><td><code>permission_id</code></td><td><code>uuid NOT NULL REFERENCES identity.permissions(id)</code></td></tr>
+<tr><td><code>PRIMARY</code></td><td><code>KEY(role_id,permission_id)</code></td></tr>
+</table></div>
+<h2>identity.sessions</h2>
+<p>Refresh token chỉ lưu hash, hỗ trợ rotation và thu hồi.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>user_id</code></td><td><code>uuid NOT NULL REFERENCES identity.users(id)</code></td></tr>
+<tr><td><code>refresh_token_hash</code></td><td><code>text NOT NULL UNIQUE</code></td></tr>
+<tr><td><code>family_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>user_agent</code></td><td><code>text</code></td></tr>
+<tr><td><code>ip</code></td><td><code>inet</code></td></tr>
+<tr><td><code>expires_at</code></td><td><code>timestamptz NOT NULL</code></td></tr>
+<tr><td><code>revoked_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>identity.verification_tokens</h2>
+<p>Xác minh email và reset mật khẩu; token một lần chỉ lưu hash.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>user_id</code></td><td><code>uuid NOT NULL REFERENCES identity.users(id)</code></td></tr>
+<tr><td><code>purpose</code></td><td><code>text NOT NULL CHECK(purpose IN (&#x27;VERIFY_EMAIL&#x27;,&#x27;RESET_PASSWORD&#x27;))</code></td></tr>
+<tr><td><code>token_hash</code></td><td><code>text NOT NULL UNIQUE</code></td></tr>
+<tr><td><code>attempts</code></td><td><code>integer NOT NULL DEFAULT 0 CHECK(attempts &gt;= 0)</code></td></tr>
+<tr><td><code>expires_at</code></td><td><code>timestamptz NOT NULL</code></td></tr>
+<tr><td><code>consumed_at</code></td><td><code>timestamptz</code></td></tr>
+</table></div>
+<h2>identity.oauth_accounts</h2>
+<p>Liên kết tài khoản nhà cung cấp đăng nhập.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>user_id</code></td><td><code>uuid NOT NULL REFERENCES identity.users(id)</code></td></tr>
+<tr><td><code>provider</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>subject</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>UNIQUE(provider,subject)</code></td><td>``</td></tr>
+</table></div>
+<h2>identity.travelers</h2>
+<p>Hành khách lưu sẵn; thông tin giấy tờ mã hóa.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>user_id</code></td><td><code>uuid NOT NULL REFERENCES identity.users(id)</code></td></tr>
+<tr><td><code>given_name</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>family_name</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>birth_date</code></td><td><code>date NOT NULL</code></td></tr>
+<tr><td><code>gender</code></td><td><code>text</code></td></tr>
+<tr><td><code>nationality</code></td><td><code>char(2)</code></td></tr>
+<tr><td><code>document_ciphertext</code></td><td><code>text</code></td></tr>
+<tr><td><code>document_expires_on</code></td><td><code>date</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>flight.airports</h2>
+<p>Danh mục sân bay; timezone IANA dùng hiển thị giờ địa phương.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>iata</code></td><td><code>char(3) NOT NULL UNIQUE</code></td></tr>
+<tr><td><code>name</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>city</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>country_code</code></td><td><code>char(2) NOT NULL</code></td></tr>
+<tr><td><code>timezone</code></td><td><code>text NOT NULL</code></td></tr>
+</table></div>
+<h2>flight.airlines</h2>
+<p>Danh mục hãng bay.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>iata</code></td><td><code>varchar(3) NOT NULL UNIQUE</code></td></tr>
+<tr><td><code>name</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>logo_url</code></td><td><code>text</code></td></tr>
+</table></div>
+<h2>flight.suppliers</h2>
+<p>Nhà cung cấp; chỉ lưu secret reference, không lưu key trong cấu hình JSON.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>code</code></td><td><code>text NOT NULL UNIQUE</code></td></tr>
+<tr><td><code>name</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>mode</code></td><td><code>text NOT NULL CHECK(mode IN (&#x27;MOCK&#x27;,&#x27;SANDBOX&#x27;,&#x27;LIVE&#x27;))</code></td></tr>
+<tr><td><code>enabled</code></td><td><code>boolean NOT NULL DEFAULT false</code></td></tr>
+<tr><td><code>secret_ref</code></td><td><code>text</code></td></tr>
+<tr><td><code>config</code></td><td><code>jsonb NOT NULL DEFAULT &#x27;{}&#x27;::jsonb</code></td></tr>
+<tr><td><code>last_health_at</code></td><td><code>timestamptz</code></td></tr>
+</table></div>
+<h2>flight.routes</h2>
+<p>Đường bay tham khảo, không biểu thị tồn chỗ.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>origin_id</code></td><td><code>uuid NOT NULL REFERENCES flight.airports(id)</code></td></tr>
+<tr><td><code>destination_id</code></td><td><code>uuid NOT NULL REFERENCES flight.airports(id)</code></td></tr>
+<tr><td><code>active</code></td><td><code>boolean NOT NULL DEFAULT true</code></td></tr>
+<tr><td><code>UNIQUE(origin_id,destination_id)</code></td><td>``</td></tr>
+<tr><td><code>CHECK(origin_id</code></td><td><code>&lt;&gt; destination_id)</code></td></tr>
+</table></div>
+<h2>flight.searches</h2>
+<p>Yêu cầu tìm kiếm; có TTL dọn dữ liệu.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>user_id</code></td><td><code>uuid</code></td></tr>
+<tr><td><code>criteria</code></td><td><code>jsonb NOT NULL</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL DEFAULT &#x27;PENDING&#x27; CHECK(status IN (&#x27;PENDING&#x27;,&#x27;READY&#x27;,&#x27;PARTIAL&#x27;,&#x27;FAILED&#x27;))</code></td></tr>
+<tr><td><code>expires_at</code></td><td><code>timestamptz NOT NULL</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>flight.offers</h2>
+<p>Offer từ nhà cung cấp, có thể gồm nhiều chặng và nhiều chiều.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>search_id</code></td><td><code>uuid NOT NULL REFERENCES flight.searches(id)</code></td></tr>
+<tr><td><code>supplier_id</code></td><td><code>uuid NOT NULL REFERENCES flight.suppliers(id)</code></td></tr>
+<tr><td><code>supplier_offer_id</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>currency</code></td><td><code>char(3) NOT NULL</code></td></tr>
+<tr><td><code>total_minor</code></td><td><code>bigint NOT NULL CHECK(total_minor &gt;= 0)</code></td></tr>
+<tr><td><code>fare_brand</code></td><td><code>text</code></td></tr>
+<tr><td><code>rules</code></td><td><code>jsonb NOT NULL DEFAULT &#x27;{}&#x27;::jsonb</code></td></tr>
+<tr><td><code>payload</code></td><td><code>jsonb NOT NULL</code></td></tr>
+<tr><td><code>expires_at</code></td><td><code>timestamptz NOT NULL</code></td></tr>
+<tr><td><code>priced_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>flight.offer_segments</h2>
+<p>Các chặng offer; journey_no 0 là đi, 1 là về, hỗ trợ multi city bằng số lớn hơn.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>offer_id</code></td><td><code>uuid NOT NULL REFERENCES flight.offers(id)</code></td></tr>
+<tr><td><code>journey_no</code></td><td><code>integer NOT NULL CHECK(journey_no &gt;= 0)</code></td></tr>
+<tr><td><code>segment_no</code></td><td><code>integer NOT NULL CHECK(segment_no &gt;= 0)</code></td></tr>
+<tr><td><code>origin_id</code></td><td><code>uuid NOT NULL REFERENCES flight.airports(id)</code></td></tr>
+<tr><td><code>destination_id</code></td><td><code>uuid NOT NULL REFERENCES flight.airports(id)</code></td></tr>
+<tr><td><code>airline_id</code></td><td><code>uuid NOT NULL REFERENCES flight.airlines(id)</code></td></tr>
+<tr><td><code>operating_airline_code</code></td><td><code>text</code></td></tr>
+<tr><td><code>flight_number</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>cabin</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>booking_class</code></td><td><code>text</code></td></tr>
+<tr><td><code>departs_at</code></td><td><code>timestamptz NOT NULL</code></td></tr>
+<tr><td><code>arrives_at</code></td><td><code>timestamptz NOT NULL</code></td></tr>
+<tr><td><code>aircraft_code</code></td><td><code>text</code></td></tr>
+<tr><td><code>UNIQUE(offer_id,journey_no,segment_no)</code></td><td>``</td></tr>
+<tr><td><code>CHECK(arrives_at</code></td><td><code>&gt; departs_at)</code></td></tr>
+<tr><td><code>CHECK(origin_id</code></td><td><code>&lt;&gt; destination_id)</code></td></tr>
+</table></div>
+<h2>booking.bookings</h2>
+<p>Aggregate đặt vé; trạng thái xuất vé độc lập trạng thái tiền ở payment service.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>reference</code></td><td><code>text NOT NULL UNIQUE</code></td></tr>
+<tr><td><code>user_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>offer_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>supplier_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>supplier_order_id</code></td><td><code>text</code></td></tr>
+<tr><td><code>airline_pnr</code></td><td><code>text</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL DEFAULT &#x27;DRAFT&#x27; CHECK(status IN (&#x27;DRAFT&#x27;,&#x27;RESERVING&#x27;,&#x27;AWAITING_PAYMENT&#x27;,&#x27;ISSUING&#x27;,&#x27;TICKETED&#x27;,&#x27;EXPIRED&#x27;,&#x27;FAILED&#x27;,&#x27;CANCEL_PENDING&#x27;,&#x27;CANCELLED&#x27;,&#x27;MANUAL_REVIEW&#x27;))</code></td></tr>
+<tr><td><code>currency</code></td><td><code>char(3) NOT NULL</code></td></tr>
+<tr><td><code>total_minor</code></td><td><code>bigint NOT NULL CHECK(total_minor &gt;= 0)</code></td></tr>
+<tr><td><code>contact_email</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>contact_phone</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>offer_snapshot</code></td><td><code>jsonb NOT NULL</code></td></tr>
+<tr><td><code>accepted_rules_version</code></td><td><code>text</code></td></tr>
+<tr><td><code>expires_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>version</code></td><td><code>integer NOT NULL DEFAULT 0 CHECK(version &gt;= 0)</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>updated_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>booking.passengers</h2>
+<p>Snapshot hành khách theo booking; không phụ thuộc thay đổi hồ sơ.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>booking_id</code></td><td><code>uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>traveler_id</code></td><td><code>uuid</code></td></tr>
+<tr><td><code>passenger_type</code></td><td><code>text NOT NULL CHECK(passenger_type IN (&#x27;ADT&#x27;,&#x27;CHD&#x27;,&#x27;INF&#x27;))</code></td></tr>
+<tr><td><code>given_name</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>family_name</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>birth_date</code></td><td><code>date NOT NULL</code></td></tr>
+<tr><td><code>gender</code></td><td><code>text</code></td></tr>
+<tr><td><code>nationality</code></td><td><code>char(2)</code></td></tr>
+<tr><td><code>document_ciphertext</code></td><td><code>text</code></td></tr>
+<tr><td><code>document_expires_on</code></td><td><code>date</code></td></tr>
+<tr><td><code>associated_adult_id</code></td><td><code>uuid</code></td></tr>
+<tr><td><code>UNIQUE(booking_id,id)</code></td><td>``</td></tr>
+<tr><td><code>FOREIGN</code></td><td><code>KEY(booking_id,associated_adult_id) REFERENCES booking.passengers(booking_id,id)</code></td></tr>
+</table></div>
+<h2>booking.segments</h2>
+<p>Snapshot chặng của booking; không FK vào offer có TTL.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>booking_id</code></td><td><code>uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>journey_no</code></td><td><code>integer NOT NULL CHECK(journey_no &gt;= 0)</code></td></tr>
+<tr><td><code>segment_no</code></td><td><code>integer NOT NULL CHECK(segment_no &gt;= 0)</code></td></tr>
+<tr><td><code>origin_iata</code></td><td><code>char(3) NOT NULL</code></td></tr>
+<tr><td><code>destination_iata</code></td><td><code>char(3) NOT NULL</code></td></tr>
+<tr><td><code>marketing_airline</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>operating_airline</code></td><td><code>text</code></td></tr>
+<tr><td><code>flight_number</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>cabin</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>departs_at</code></td><td><code>timestamptz NOT NULL</code></td></tr>
+<tr><td><code>arrives_at</code></td><td><code>timestamptz NOT NULL</code></td></tr>
+<tr><td><code>origin_timezone</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>destination_timezone</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>UNIQUE(booking_id,journey_no,segment_no)</code></td><td>``</td></tr>
+<tr><td><code>UNIQUE(booking_id,id)</code></td><td>``</td></tr>
+<tr><td><code>CHECK(arrives_at</code></td><td><code>&gt; departs_at)</code></td></tr>
+</table></div>
+<h2>booking.ancillaries</h2>
+<p>Ghế, hành lý, suất ăn theo khách/chặng, được nhà cung cấp xác nhận.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>booking_id</code></td><td><code>uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>passenger_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>segment_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>kind</code></td><td><code>text NOT NULL CHECK(kind IN (&#x27;SEAT&#x27;,&#x27;BAGGAGE&#x27;,&#x27;MEAL&#x27;))</code></td></tr>
+<tr><td><code>code</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>quantity</code></td><td><code>integer NOT NULL DEFAULT 1 CHECK(quantity &gt; 0)</code></td></tr>
+<tr><td><code>amount_minor</code></td><td><code>bigint NOT NULL CHECK(amount_minor &gt;= 0)</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL DEFAULT &#x27;REQUESTED&#x27; CHECK(status IN (&#x27;REQUESTED&#x27;,&#x27;CONFIRMED&#x27;,&#x27;REJECTED&#x27;,&#x27;CANCELLED&#x27;))</code></td></tr>
+<tr><td><code>FOREIGN</code></td><td><code>KEY(booking_id,passenger_id) REFERENCES booking.passengers(booking_id,id)</code></td></tr>
+<tr><td><code>FOREIGN</code></td><td><code>KEY(booking_id,segment_id) REFERENCES booking.segments(booking_id,id)</code></td></tr>
+<tr><td><code>UNIQUE(passenger_id,segment_id,kind,code)</code></td><td>``</td></tr>
+</table></div>
+<h2>booking.price_lines</h2>
+<p>Snapshot tách giá vé, thuế, phí, dịch vụ và giảm giá.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>booking_id</code></td><td><code>uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>kind</code></td><td><code>text NOT NULL CHECK(kind IN (&#x27;FARE&#x27;,&#x27;TAX&#x27;,&#x27;SERVICE_FEE&#x27;,&#x27;ANCILLARY&#x27;,&#x27;DISCOUNT&#x27;))</code></td></tr>
+<tr><td><code>label</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>amount_minor</code></td><td><code>bigint NOT NULL</code></td></tr>
+<tr><td><code>CHECK((kind</code></td><td><code>= &#x27;DISCOUNT&#x27; AND amount_minor &lt;= 0) OR (kind &lt;&gt; &#x27;DISCOUNT&#x27; AND amount_minor &gt;= 0))</code></td></tr>
+</table></div>
+<h2>booking.reservations</h2>
+<p>Lần giữ chỗ của nhà cung cấp; không tự giả định giữ được chỗ.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>booking_id</code></td><td><code>uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>supplier_locator</code></td><td><code>text</code></td></tr>
+<tr><td><code>request_key</code></td><td><code>text NOT NULL UNIQUE</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL CHECK(status IN (&#x27;REQUESTED&#x27;,&#x27;HELD&#x27;,&#x27;REJECTED&#x27;,&#x27;RELEASED&#x27;,&#x27;EXPIRED&#x27;,&#x27;UNKNOWN&#x27;))</code></td></tr>
+<tr><td><code>expires_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>response_snapshot</code></td><td><code>jsonb</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>booking.tickets</h2>
+<p>Một số vé gắn một hành khách, có thể bao phủ nhiều chặng.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>booking_id</code></td><td><code>uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>passenger_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>ticket_number</code></td><td><code>text NOT NULL UNIQUE</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL CHECK(status IN (&#x27;ISSUED&#x27;,&#x27;VOID&#x27;,&#x27;REFUNDED&#x27;,&#x27;EXCHANGED&#x27;))</code></td></tr>
+<tr><td><code>issued_at</code></td><td><code>timestamptz NOT NULL</code></td></tr>
+<tr><td><code>document_object_key</code></td><td><code>text</code></td></tr>
+<tr><td><code>UNIQUE(booking_id,id)</code></td><td>``</td></tr>
+<tr><td><code>FOREIGN</code></td><td><code>KEY(booking_id,passenger_id) REFERENCES booking.passengers(booking_id,id)</code></td></tr>
+</table></div>
+<h2>booking.ticket_coupons</h2>
+<p>Chặng sử dụng vé: ticket 1:N coupons.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>booking_id</code></td><td><code>uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>ticket_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>segment_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL DEFAULT &#x27;OPEN&#x27; CHECK(status IN (&#x27;OPEN&#x27;,&#x27;FLOWN&#x27;,&#x27;VOID&#x27;,&#x27;REFUNDED&#x27;,&#x27;EXCHANGED&#x27;))</code></td></tr>
+<tr><td><code>FOREIGN</code></td><td><code>KEY(booking_id,ticket_id) REFERENCES booking.tickets(booking_id,id)</code></td></tr>
+<tr><td><code>FOREIGN</code></td><td><code>KEY(booking_id,segment_id) REFERENCES booking.segments(booking_id,id)</code></td></tr>
+<tr><td><code>UNIQUE(ticket_id,segment_id)</code></td><td>``</td></tr>
+</table></div>
+<h2>booking.change_requests</h2>
+<p>Yêu cầu đổi/hủy theo khả năng supplier; lưu quote và snapshot có hạn.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>booking_id</code></td><td><code>uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>requested_by</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>kind</code></td><td><code>text NOT NULL CHECK(kind IN (&#x27;CHANGE&#x27;,&#x27;CANCEL&#x27;))</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL DEFAULT &#x27;QUOTED&#x27; CHECK(status IN (&#x27;QUOTED&#x27;,&#x27;CONFIRMED&#x27;,&#x27;PROCESSING&#x27;,&#x27;COMPLETED&#x27;,&#x27;REJECTED&#x27;,&#x27;EXPIRED&#x27;,&#x27;MANUAL_REVIEW&#x27;))</code></td></tr>
+<tr><td><code>supplier_quote_ref</code></td><td><code>text</code></td></tr>
+<tr><td><code>quote_snapshot</code></td><td><code>jsonb NOT NULL</code></td></tr>
+<tr><td><code>currency</code></td><td><code>char(3) NOT NULL</code></td></tr>
+<tr><td><code>additional_collect_minor</code></td><td><code>bigint NOT NULL DEFAULT 0 CHECK(additional_collect_minor &gt;= 0)</code></td></tr>
+<tr><td><code>refund_due_minor</code></td><td><code>bigint NOT NULL DEFAULT 0 CHECK(refund_due_minor &gt;= 0)</code></td></tr>
+<tr><td><code>quote_expires_at</code></td><td><code>timestamptz NOT NULL</code></td></tr>
+<tr><td><code>confirmed_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>booking.status_history</h2>
+<p>Nhật ký chuyển trạng thái có correlation ID.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>booking_id</code></td><td><code>uuid NOT NULL REFERENCES booking.bookings(id)</code></td></tr>
+<tr><td><code>from_status</code></td><td><code>text</code></td></tr>
+<tr><td><code>to_status</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>reason</code></td><td><code>text</code></td></tr>
+<tr><td><code>correlation_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>payment.payments</h2>
+<p>Mỗi booking có nhiều lần trả tiền; amount do server tính, không tin frontend.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>booking_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>change_request_id</code></td><td><code>uuid</code></td></tr>
+<tr><td><code>user_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>provider</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>provider_payment_id</code></td><td><code>text</code></td></tr>
+<tr><td><code>purpose</code></td><td><code>text NOT NULL DEFAULT &#x27;BOOKING&#x27; CHECK(purpose IN (&#x27;BOOKING&#x27;,&#x27;CHANGE&#x27;))</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL DEFAULT &#x27;PENDING&#x27; CHECK(status IN (&#x27;PENDING&#x27;,&#x27;SUCCEEDED&#x27;,&#x27;FAILED&#x27;,&#x27;EXPIRED&#x27;,&#x27;REFUND_PENDING&#x27;,&#x27;PARTIALLY_REFUNDED&#x27;,&#x27;REFUNDED&#x27;))</code></td></tr>
+<tr><td><code>currency</code></td><td><code>char(3) NOT NULL</code></td></tr>
+<tr><td><code>amount_minor</code></td><td><code>bigint NOT NULL CHECK(amount_minor &gt; 0)</code></td></tr>
+<tr><td><code>refunded_minor</code></td><td><code>bigint NOT NULL DEFAULT 0 CHECK(refunded_minor &gt;= 0 AND refunded_minor &lt;= amount_minor)</code></td></tr>
+<tr><td><code>idempotency_key</code></td><td><code>text NOT NULL UNIQUE</code></td></tr>
+<tr><td><code>checkout_url</code></td><td><code>text</code></td></tr>
+<tr><td><code>expires_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>paid_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>UNIQUE(provider,provider_payment_id)</code></td><td>``</td></tr>
+<tr><td><code>CHECK((purpose=&#x27;BOOKING&#x27;</code></td><td><code>AND change_request_id IS NULL) OR (purpose=&#x27;CHANGE&#x27; AND change_request_id IS NOT NULL))</code></td></tr>
+</table></div>
+<h2>payment.webhook_events</h2>
+<p>Inbox provider webhook; dedup theo provider + event ID.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>provider</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>provider_event_id</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>payload_redacted</code></td><td><code>jsonb NOT NULL</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL DEFAULT &#x27;RECEIVED&#x27; CHECK(status IN (&#x27;RECEIVED&#x27;,&#x27;PROCESSED&#x27;,&#x27;FAILED&#x27;))</code></td></tr>
+<tr><td><code>received_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>processed_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>UNIQUE(provider,provider_event_id)</code></td><td>``</td></tr>
+</table></div>
+<h2>payment.refunds</h2>
+<p>Hoàn tiền độc lập yêu cầu hủy; tổng refund cần kiểm tra trong transaction khóa payment.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>payment_id</code></td><td><code>uuid NOT NULL REFERENCES payment.payments(id)</code></td></tr>
+<tr><td><code>change_request_id</code></td><td><code>uuid</code></td></tr>
+<tr><td><code>provider_refund_id</code></td><td><code>text</code></td></tr>
+<tr><td><code>amount_minor</code></td><td><code>bigint NOT NULL CHECK(amount_minor &gt; 0)</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL DEFAULT &#x27;REQUESTED&#x27; CHECK(status IN (&#x27;REQUESTED&#x27;,&#x27;PROCESSING&#x27;,&#x27;SUCCEEDED&#x27;,&#x27;FAILED&#x27;,&#x27;MANUAL_REVIEW&#x27;))</code></td></tr>
+<tr><td><code>reason</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>idempotency_key</code></td><td><code>text NOT NULL UNIQUE</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>completed_at</code></td><td><code>timestamptz</code></td></tr>
+</table></div>
+<h2>payment.reconciliation_cases</h2>
+<p>Đối soát lệch tiền/provider; không tự sửa giao dịch đã thành công.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>payment_id</code></td><td><code>uuid REFERENCES payment.payments(id)</code></td></tr>
+<tr><td><code>provider_reference</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>kind</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL DEFAULT &#x27;OPEN&#x27; CHECK(status IN (&#x27;OPEN&#x27;,&#x27;INVESTIGATING&#x27;,&#x27;RESOLVED&#x27;))</code></td></tr>
+<tr><td><code>expected_minor</code></td><td><code>bigint</code></td></tr>
+<tr><td><code>actual_minor</code></td><td><code>bigint</code></td></tr>
+<tr><td><code>currency</code></td><td><code>char(3) NOT NULL</code></td></tr>
+<tr><td><code>assigned_to</code></td><td><code>uuid</code></td></tr>
+<tr><td><code>notes</code></td><td><code>text</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>engagement.promotions</h2>
+<p>Coupon, giới hạn số lượt và hiệu lực.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>code</code></td><td><code>text NOT NULL UNIQUE</code></td></tr>
+<tr><td><code>title</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>discount_kind</code></td><td><code>text NOT NULL CHECK(discount_kind IN (&#x27;FIXED&#x27;,&#x27;PERCENT&#x27;))</code></td></tr>
+<tr><td><code>discount_value</code></td><td><code>bigint NOT NULL CHECK(discount_value &gt; 0)</code></td></tr>
+<tr><td><code>currency</code></td><td><code>char(3)</code></td></tr>
+<tr><td><code>max_discount_minor</code></td><td><code>bigint CHECK(max_discount_minor &gt;= 0)</code></td></tr>
+<tr><td><code>minimum_total_minor</code></td><td><code>bigint NOT NULL DEFAULT 0 CHECK(minimum_total_minor &gt;= 0)</code></td></tr>
+<tr><td><code>usage_limit</code></td><td><code>integer CHECK(usage_limit &gt; 0)</code></td></tr>
+<tr><td><code>per_user_limit</code></td><td><code>integer NOT NULL DEFAULT 1 CHECK(per_user_limit &gt; 0)</code></td></tr>
+<tr><td><code>starts_at</code></td><td><code>timestamptz NOT NULL</code></td></tr>
+<tr><td><code>ends_at</code></td><td><code>timestamptz NOT NULL</code></td></tr>
+<tr><td><code>enabled</code></td><td><code>boolean NOT NULL DEFAULT true</code></td></tr>
+<tr><td><code>CHECK(ends_at</code></td><td><code>&gt; starts_at)</code></td></tr>
+<tr><td><code>CHECK((discount_kind=&#x27;PERCENT&#x27;</code></td><td><code>AND discount_value &lt;= 100) OR (discount_kind=&#x27;FIXED&#x27; AND currency IS NOT NULL))</code></td></tr>
+</table></div>
+<h2>engagement.promotion_redemptions</h2>
+<p>Reservation lượt coupon tránh vượt quota khi thanh toán song song.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>promotion_id</code></td><td><code>uuid NOT NULL REFERENCES engagement.promotions(id)</code></td></tr>
+<tr><td><code>booking_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>user_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>amount_minor</code></td><td><code>bigint NOT NULL CHECK(amount_minor &gt;= 0)</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL CHECK(status IN (&#x27;RESERVED&#x27;,&#x27;USED&#x27;,&#x27;RELEASED&#x27;))</code></td></tr>
+<tr><td><code>expires_at</code></td><td><code>timestamptz NOT NULL</code></td></tr>
+<tr><td><code>UNIQUE(promotion_id,booking_id)</code></td><td>``</td></tr>
+</table></div>
+<h2>engagement.content_pages</h2>
+<p>Banner, trang tĩnh, điều khoản; hỗ trợ bản nháp.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>slug</code></td><td><code>text NOT NULL UNIQUE</code></td></tr>
+<tr><td><code>kind</code></td><td><code>text NOT NULL CHECK(kind IN (&#x27;BANNER&#x27;,&#x27;PAGE&#x27;,&#x27;TERMS&#x27;))</code></td></tr>
+<tr><td><code>title</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>body</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>image_object_key</code></td><td><code>text</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL DEFAULT &#x27;DRAFT&#x27; CHECK(status IN (&#x27;DRAFT&#x27;,&#x27;PUBLISHED&#x27;,&#x27;ARCHIVED&#x27;))</code></td></tr>
+<tr><td><code>version</code></td><td><code>integer NOT NULL DEFAULT 1 CHECK(version &gt; 0)</code></td></tr>
+<tr><td><code>updated_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>notification.notifications</h2>
+<p>Thông báo in-app/email; delivery retry không tạo bản ghi nghiệp vụ trùng.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>user_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>booking_id</code></td><td><code>uuid</code></td></tr>
+<tr><td><code>channel</code></td><td><code>text NOT NULL CHECK(channel IN (&#x27;IN_APP&#x27;,&#x27;EMAIL&#x27;,&#x27;SMS&#x27;))</code></td></tr>
+<tr><td><code>template_code</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>title</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>body</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL DEFAULT &#x27;PENDING&#x27; CHECK(status IN (&#x27;PENDING&#x27;,&#x27;SENT&#x27;,&#x27;FAILED&#x27;))</code></td></tr>
+<tr><td><code>dedup_key</code></td><td><code>text NOT NULL UNIQUE</code></td></tr>
+<tr><td><code>read_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>notification.delivery_attempts</h2>
+<p>Lịch sử gửi thông báo.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>notification_id</code></td><td><code>uuid NOT NULL REFERENCES notification.notifications(id)</code></td></tr>
+<tr><td><code>attempt_no</code></td><td><code>integer NOT NULL CHECK(attempt_no &gt; 0)</code></td></tr>
+<tr><td><code>provider_reference</code></td><td><code>text</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL CHECK(status IN (&#x27;SENT&#x27;,&#x27;FAILED&#x27;))</code></td></tr>
+<tr><td><code>error_code</code></td><td><code>text</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>UNIQUE(notification_id,attempt_no)</code></td><td>``</td></tr>
+</table></div>
+<h2>assistant.conversations</h2>
+<p>Phiên chat; server xác thực quyền sở hữu, hỗ trợ chuyển CSKH.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>user_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>booking_id</code></td><td><code>uuid</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL DEFAULT &#x27;AI&#x27; CHECK(status IN (&#x27;AI&#x27;,&#x27;HANDOFF&#x27;,&#x27;CLOSED&#x27;))</code></td></tr>
+<tr><td><code>title</code></td><td><code>text</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>updated_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>assistant.messages</h2>
+<p>Nội dung chat và citations; lọc/mã hóa PII theo chính sách.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>conversation_id</code></td><td><code>uuid NOT NULL REFERENCES assistant.conversations(id)</code></td></tr>
+<tr><td><code>role</code></td><td><code>text NOT NULL CHECK(role IN (&#x27;USER&#x27;,&#x27;ASSISTANT&#x27;,&#x27;TOOL&#x27;,&#x27;AGENT&#x27;))</code></td></tr>
+<tr><td><code>author_user_id</code></td><td><code>uuid</code></td></tr>
+<tr><td><code>content</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>citations</code></td><td><code>jsonb NOT NULL DEFAULT &#x27;[]&#x27;::jsonb</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>assistant.tool_calls</h2>
+<p>Audit gọi tool; không coi đề xuất của model là quyền thực thi.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>conversation_id</code></td><td><code>uuid NOT NULL REFERENCES assistant.conversations(id)</code></td></tr>
+<tr><td><code>message_id</code></td><td><code>uuid REFERENCES assistant.messages(id)</code></td></tr>
+<tr><td><code>tool_name</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>arguments_redacted</code></td><td><code>jsonb NOT NULL</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL CHECK(status IN (&#x27;PROPOSED&#x27;,&#x27;CONFIRM_REQUIRED&#x27;,&#x27;CONFIRMED&#x27;,&#x27;EXECUTED&#x27;,&#x27;REJECTED&#x27;,&#x27;FAILED&#x27;))</code></td></tr>
+<tr><td><code>confirmation_token_hash</code></td><td><code>text</code></td></tr>
+<tr><td><code>confirmation_expires_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>idempotency_key</code></td><td><code>text UNIQUE</code></td></tr>
+<tr><td><code>result_redacted</code></td><td><code>jsonb</code></td></tr>
+<tr><td><code>latency_ms</code></td><td><code>integer CHECK(latency_ms &gt;= 0)</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>assistant.knowledge_documents</h2>
+<p>Tri thức có nguồn, phiên bản, ngày hiệu lực và phạm vi truy cập.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>document_key</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>version</code></td><td><code>integer NOT NULL CHECK(version &gt; 0)</code></td></tr>
+<tr><td><code>title</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>source_url</code></td><td><code>text</code></td></tr>
+<tr><td><code>object_key</code></td><td><code>text</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL DEFAULT &#x27;DRAFT&#x27; CHECK(status IN (&#x27;DRAFT&#x27;,&#x27;PUBLISHED&#x27;,&#x27;ARCHIVED&#x27;))</code></td></tr>
+<tr><td><code>audience</code></td><td><code>text NOT NULL DEFAULT &#x27;PUBLIC&#x27; CHECK(audience IN (&#x27;PUBLIC&#x27;,&#x27;STAFF&#x27;))</code></td></tr>
+<tr><td><code>airline_code</code></td><td><code>text</code></td></tr>
+<tr><td><code>effective_from</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>effective_to</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>checksum</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>UNIQUE(document_key,version)</code></td><td>``</td></tr>
+<tr><td><code>CHECK(effective_to</code></td><td><code>IS NULL OR effective_from IS NULL OR effective_to &gt; effective_from)</code></td></tr>
+</table></div>
+<h2>assistant.knowledge_chunks</h2>
+<p>Chunk dùng retrieval; vector thêm bằng optional-vector.sql.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>document_id</code></td><td><code>uuid NOT NULL REFERENCES assistant.knowledge_documents(id)</code></td></tr>
+<tr><td><code>ordinal</code></td><td><code>integer NOT NULL CHECK(ordinal &gt;= 0)</code></td></tr>
+<tr><td><code>content</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>token_count</code></td><td><code>integer CHECK(token_count &gt;= 0)</code></td></tr>
+<tr><td><code>UNIQUE(document_id,ordinal)</code></td><td>``</td></tr>
+</table></div>
+<h2>assistant.feedback</h2>
+<p>Đánh giá câu trả lời AI để đo chất lượng.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>message_id</code></td><td><code>uuid NOT NULL REFERENCES assistant.messages(id)</code></td></tr>
+<tr><td><code>user_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>rating</code></td><td><code>smallint NOT NULL CHECK(rating IN (-1,1))</code></td></tr>
+<tr><td><code>reason</code></td><td><code>text</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>UNIQUE(message_id,user_id)</code></td><td>``</td></tr>
+</table></div>
+<h2>support.cases</h2>
+<p>Ticket CSKH; liên kết conversation bằng ID logic.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>user_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>booking_id</code></td><td><code>uuid</code></td></tr>
+<tr><td><code>conversation_id</code></td><td><code>uuid</code></td></tr>
+<tr><td><code>assigned_to</code></td><td><code>uuid</code></td></tr>
+<tr><td><code>subject</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>category</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>status</code></td><td><code>text NOT NULL DEFAULT &#x27;OPEN&#x27; CHECK(status IN (&#x27;OPEN&#x27;,&#x27;ASSIGNED&#x27;,&#x27;WAITING_CUSTOMER&#x27;,&#x27;RESOLVED&#x27;,&#x27;CLOSED&#x27;))</code></td></tr>
+<tr><td><code>priority</code></td><td><code>text NOT NULL DEFAULT &#x27;NORMAL&#x27; CHECK(priority IN (&#x27;LOW&#x27;,&#x27;NORMAL&#x27;,&#x27;HIGH&#x27;,&#x27;URGENT&#x27;))</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>updated_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>support.messages</h2>
+<p>Trao đổi CSKH và ghi chú nội bộ; không lộ note nội bộ cho khách.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>case_id</code></td><td><code>uuid NOT NULL REFERENCES support.cases(id)</code></td></tr>
+<tr><td><code>author_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>body</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>internal</code></td><td><code>boolean NOT NULL DEFAULT false</code></td></tr>
+<tr><td><code>attachment_object_key</code></td><td><code>text</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>support.audit_logs</h2>
+<p>Audit hành động quản trị theo resource; append-only bằng quyền database.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>actor_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>action</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>resource_type</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>resource_id</code></td><td><code>uuid</code></td></tr>
+<tr><td><code>before_redacted</code></td><td><code>jsonb</code></td></tr>
+<tr><td><code>after_redacted</code></td><td><code>jsonb</code></td></tr>
+<tr><td><code>correlation_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>created_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+</table></div>
+<h2>identity.outbox_events</h2>
+<p>Outbox riêng service; ghi cùng transaction thay đổi aggregate.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>aggregate_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>aggregate_version</code></td><td><code>integer NOT NULL CHECK(aggregate_version &gt;= 0)</code></td></tr>
+<tr><td><code>event_type</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>event_version</code></td><td><code>integer NOT NULL DEFAULT 1</code></td></tr>
+<tr><td><code>payload</code></td><td><code>jsonb NOT NULL</code></td></tr>
+<tr><td><code>correlation_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>occurred_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>published_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>attempts</code></td><td><code>integer NOT NULL DEFAULT 0 CHECK(attempts &gt;= 0)</code></td></tr>
+<tr><td><code>UNIQUE(aggregate_id,aggregate_version,event_type)</code></td><td>``</td></tr>
+</table></div>
+<h2>identity.inbox_events</h2>
+<p>Dedup consumer; ghi inbox và cập nhật nghiệp vụ cùng transaction.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>consumer</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>event_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>received_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>processed_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>PRIMARY</code></td><td><code>KEY(consumer,event_id)</code></td></tr>
+</table></div>
+<h2>flight.outbox_events</h2>
+<p>Outbox riêng service; ghi cùng transaction thay đổi aggregate.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>aggregate_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>aggregate_version</code></td><td><code>integer NOT NULL CHECK(aggregate_version &gt;= 0)</code></td></tr>
+<tr><td><code>event_type</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>event_version</code></td><td><code>integer NOT NULL DEFAULT 1</code></td></tr>
+<tr><td><code>payload</code></td><td><code>jsonb NOT NULL</code></td></tr>
+<tr><td><code>correlation_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>occurred_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>published_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>attempts</code></td><td><code>integer NOT NULL DEFAULT 0 CHECK(attempts &gt;= 0)</code></td></tr>
+<tr><td><code>UNIQUE(aggregate_id,aggregate_version,event_type)</code></td><td>``</td></tr>
+</table></div>
+<h2>flight.inbox_events</h2>
+<p>Dedup consumer; ghi inbox và cập nhật nghiệp vụ cùng transaction.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>consumer</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>event_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>received_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>processed_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>PRIMARY</code></td><td><code>KEY(consumer,event_id)</code></td></tr>
+</table></div>
+<h2>booking.outbox_events</h2>
+<p>Outbox riêng service; ghi cùng transaction thay đổi aggregate.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>aggregate_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>aggregate_version</code></td><td><code>integer NOT NULL CHECK(aggregate_version &gt;= 0)</code></td></tr>
+<tr><td><code>event_type</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>event_version</code></td><td><code>integer NOT NULL DEFAULT 1</code></td></tr>
+<tr><td><code>payload</code></td><td><code>jsonb NOT NULL</code></td></tr>
+<tr><td><code>correlation_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>occurred_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>published_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>attempts</code></td><td><code>integer NOT NULL DEFAULT 0 CHECK(attempts &gt;= 0)</code></td></tr>
+<tr><td><code>UNIQUE(aggregate_id,aggregate_version,event_type)</code></td><td>``</td></tr>
+</table></div>
+<h2>booking.inbox_events</h2>
+<p>Dedup consumer; ghi inbox và cập nhật nghiệp vụ cùng transaction.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>consumer</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>event_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>received_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>processed_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>PRIMARY</code></td><td><code>KEY(consumer,event_id)</code></td></tr>
+</table></div>
+<h2>payment.outbox_events</h2>
+<p>Outbox riêng service; ghi cùng transaction thay đổi aggregate.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>aggregate_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>aggregate_version</code></td><td><code>integer NOT NULL CHECK(aggregate_version &gt;= 0)</code></td></tr>
+<tr><td><code>event_type</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>event_version</code></td><td><code>integer NOT NULL DEFAULT 1</code></td></tr>
+<tr><td><code>payload</code></td><td><code>jsonb NOT NULL</code></td></tr>
+<tr><td><code>correlation_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>occurred_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>published_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>attempts</code></td><td><code>integer NOT NULL DEFAULT 0 CHECK(attempts &gt;= 0)</code></td></tr>
+<tr><td><code>UNIQUE(aggregate_id,aggregate_version,event_type)</code></td><td>``</td></tr>
+</table></div>
+<h2>payment.inbox_events</h2>
+<p>Dedup consumer; ghi inbox và cập nhật nghiệp vụ cùng transaction.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>consumer</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>event_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>received_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>processed_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>PRIMARY</code></td><td><code>KEY(consumer,event_id)</code></td></tr>
+</table></div>
+<h2>engagement.outbox_events</h2>
+<p>Outbox riêng service; ghi cùng transaction thay đổi aggregate.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>aggregate_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>aggregate_version</code></td><td><code>integer NOT NULL CHECK(aggregate_version &gt;= 0)</code></td></tr>
+<tr><td><code>event_type</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>event_version</code></td><td><code>integer NOT NULL DEFAULT 1</code></td></tr>
+<tr><td><code>payload</code></td><td><code>jsonb NOT NULL</code></td></tr>
+<tr><td><code>correlation_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>occurred_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>published_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>attempts</code></td><td><code>integer NOT NULL DEFAULT 0 CHECK(attempts &gt;= 0)</code></td></tr>
+<tr><td><code>UNIQUE(aggregate_id,aggregate_version,event_type)</code></td><td>``</td></tr>
+</table></div>
+<h2>engagement.inbox_events</h2>
+<p>Dedup consumer; ghi inbox và cập nhật nghiệp vụ cùng transaction.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>consumer</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>event_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>received_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>processed_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>PRIMARY</code></td><td><code>KEY(consumer,event_id)</code></td></tr>
+</table></div>
+<h2>notification.outbox_events</h2>
+<p>Outbox riêng service; ghi cùng transaction thay đổi aggregate.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>aggregate_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>aggregate_version</code></td><td><code>integer NOT NULL CHECK(aggregate_version &gt;= 0)</code></td></tr>
+<tr><td><code>event_type</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>event_version</code></td><td><code>integer NOT NULL DEFAULT 1</code></td></tr>
+<tr><td><code>payload</code></td><td><code>jsonb NOT NULL</code></td></tr>
+<tr><td><code>correlation_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>occurred_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>published_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>attempts</code></td><td><code>integer NOT NULL DEFAULT 0 CHECK(attempts &gt;= 0)</code></td></tr>
+<tr><td><code>UNIQUE(aggregate_id,aggregate_version,event_type)</code></td><td>``</td></tr>
+</table></div>
+<h2>notification.inbox_events</h2>
+<p>Dedup consumer; ghi inbox và cập nhật nghiệp vụ cùng transaction.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>consumer</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>event_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>received_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>processed_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>PRIMARY</code></td><td><code>KEY(consumer,event_id)</code></td></tr>
+</table></div>
+<h2>assistant.outbox_events</h2>
+<p>Outbox riêng service; ghi cùng transaction thay đổi aggregate.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>aggregate_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>aggregate_version</code></td><td><code>integer NOT NULL CHECK(aggregate_version &gt;= 0)</code></td></tr>
+<tr><td><code>event_type</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>event_version</code></td><td><code>integer NOT NULL DEFAULT 1</code></td></tr>
+<tr><td><code>payload</code></td><td><code>jsonb NOT NULL</code></td></tr>
+<tr><td><code>correlation_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>occurred_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>published_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>attempts</code></td><td><code>integer NOT NULL DEFAULT 0 CHECK(attempts &gt;= 0)</code></td></tr>
+<tr><td><code>UNIQUE(aggregate_id,aggregate_version,event_type)</code></td><td>``</td></tr>
+</table></div>
+<h2>assistant.inbox_events</h2>
+<p>Dedup consumer; ghi inbox và cập nhật nghiệp vụ cùng transaction.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>consumer</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>event_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>received_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>processed_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>PRIMARY</code></td><td><code>KEY(consumer,event_id)</code></td></tr>
+</table></div>
+<h2>support.outbox_events</h2>
+<p>Outbox riêng service; ghi cùng transaction thay đổi aggregate.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>id</code></td><td><code>uuid PRIMARY KEY DEFAULT gen_random_uuid()</code></td></tr>
+<tr><td><code>aggregate_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>aggregate_version</code></td><td><code>integer NOT NULL CHECK(aggregate_version &gt;= 0)</code></td></tr>
+<tr><td><code>event_type</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>event_version</code></td><td><code>integer NOT NULL DEFAULT 1</code></td></tr>
+<tr><td><code>payload</code></td><td><code>jsonb NOT NULL</code></td></tr>
+<tr><td><code>correlation_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>occurred_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>published_at</code></td><td><code>timestamptz</code></td></tr>
+<tr><td><code>attempts</code></td><td><code>integer NOT NULL DEFAULT 0 CHECK(attempts &gt;= 0)</code></td></tr>
+<tr><td><code>UNIQUE(aggregate_id,aggregate_version,event_type)</code></td><td>``</td></tr>
+</table></div>
+<h2>support.inbox_events</h2>
+<p>Dedup consumer; ghi inbox và cập nhật nghiệp vụ cùng transaction.</p>
+<div class="table-wrap"><table>
+<tr><td>Cột / ràng buộc</td><td>Kiểu và quy tắc SQL</td></tr>
+<tr><td><code>consumer</code></td><td><code>text NOT NULL</code></td></tr>
+<tr><td><code>event_id</code></td><td><code>uuid NOT NULL</code></td></tr>
+<tr><td><code>received_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>processed_at</code></td><td><code>timestamptz NOT NULL DEFAULT now()</code></td></tr>
+<tr><td><code>PRIMARY</code></td><td><code>KEY(consumer,event_id)</code></td></tr>
+</table></div></article><article id="doc5"><h1>Kiểm tra bàn giao</h1>
+<p>- Đã kiểm tra tĩnh 60 CREATE TABLE và 8 schema.</p>
+<p>- Đích bảng/cột của mọi REFERENCES tồn tại; không có FK vật lý xuyên service.</p>
+<p>- Mỗi schema có inbox/outbox; mỗi màn hình 01–32 xuất hiện đúng một lần trong screen catalog.</p>
+<p>- Đã xem bố cục 4 ảnh board. Ảnh minh họa có thể có chữ nhỏ, ngày, phép tính, logo, ghế hoặc giá không nhất quán; không dùng ảnh làm dữ liệu nghiệp vụ. SCREEN-CATALOG.md và dữ liệu server là nguồn để code.</p>
+<p>- Chưa chạy DDL/seed trên PostgreSQL thực tế: môi trường không có PostgreSQL. Chưa kiểm thử runtime, migrations, payment/supplier hoặc AI integration. SQL cần chạy thử trên database trống trước khi dùng.</p>
+<p>- optional-vector.sql cần pgvector được cài trên PostgreSQL, dimension phải khớp embedding model. Không bắt buộc chạy để sử dụng schema gốc.</p>
+<p>- Đây là thiết kế và ảnh template, không phải mã nguồn ứng dụng, file Figma có layer hay vé có thể sử dụng.</p></article><article id="doc6"><h1>Prompt tạo bộ ảnh giao diện</h1>
+<p>Bốn board được tạo bằng công cụ sinh ảnh tích hợp. Mỗi board là một ảnh gồm tám màn hình; dùng SCREEN-CATALOG.md để triển khai chính xác các trường và trạng thái.</p>
+<h2>Board 1</h2>
+<p>Use case: ui-mockup. Create one polished high resolution landscape UI presentation board for Skyvia, a Vietnamese flight booking platform with AI copilot. Exactly EIGHT complete desktop website screen miniatures arranged in a strict 2 columns x 4 rows grid, generous gutters, each screenshot aspect ratio 16:9, consistent design. Flat screenshot views, no devices or perspective. White and pale blue surfaces, deep navy typography, royal blue primary actions, restrained teal accents, clean Inter-like font, rounded cards, realistic production content. Use short Vietnamese labels and realistic VND prices. Each screen has its large numbered title above it. All eight screens must be distinct and completely visible, no cropped edges. Prioritize coherent UI structure over tiny text. Brand Skyvia visible on each header. Do not include technical frameworks, code, placeholder lorem ipsum, watermarks or presentation decoration. 01 / KHÁM PHÁ &amp; TÀI KHOẢN. Screens: 01 Trang chủ: airplane travel hero, large flight search form HAN to SGN round trip, dates, passengers, AI chat launcher. 02 Kết quả tìm kiếm: filters left, flight cards middle, sort and price calendar. 03 Chi tiết chuyến bay: outbound and return legs, fare comparison Economy Basic/Flex, baggage and cancellation terms. 04 Đăng nhập: email/password, Google button, travel photo panel. 05 Đăng ký: name email password consent form. 06 Xác minh email: six digit OTP input, resend countdown. 07 Quên mật khẩu: email entry and reset email confirmation card. 08 Đặt mật khẩu mới: password and confirm fields, strength indicator, success state.</p>
+<h2>Board 2</h2>
+<p>Use case: ui-mockup. Create one polished high resolution landscape UI presentation board for Skyvia, a Vietnamese flight booking platform with AI copilot. Exactly EIGHT complete desktop website screen miniatures arranged in a strict 2 columns x 4 rows grid, generous gutters, each screenshot aspect ratio 16:9, consistent design. Flat screenshot views, no devices or perspective. White and pale blue surfaces, deep navy typography, royal blue primary actions, restrained teal accents, clean Inter-like font, rounded cards, realistic production content. Use short Vietnamese labels and realistic VND prices. Each screen has its large numbered title above it. All eight screens must be distinct and completely visible, no cropped edges. Prioritize coherent UI structure over tiny text. Brand Skyvia visible on each header. Do not include technical frameworks, code, placeholder lorem ipsum, watermarks or presentation decoration. 02 / ĐẶT VÉ &amp; THANH TOÁN. Screens: 09 Hành khách: booking stepper, adult and child passenger forms, right itinerary and price summary. 10 Chọn ghế: aircraft seat map with selected blue seats and legend, passenger tabs, right fare summary. 11 Hành lý &amp; dịch vụ: baggage tier cards, meal choices, clear optional totals. 12 Kiểm tra đặt vé: passenger summaries, fare rules, price breakdown, expiry countdown, confirmation checkbox. 13 Thanh toán: QR bank payment and card choices, amount 2.480.000 VND, countdown, secure hosted payment explanation. 14 Đang xử lý: payment received, airline ticket issuance pending, status timeline and booking reference. 15 Đặt vé thành công: green success, booking reference SKY8K2, airline PNR 6 chars, e-ticket download, trip summary. 16 Thanh toán lỗi / hết hạn: clear failed and expired panels, retry or re-search, help link.</p>
+<h2>Board 3</h2>
+<p>Use case: ui-mockup. Create one polished high resolution landscape UI presentation board for Skyvia, a Vietnamese flight booking platform with AI copilot. Exactly EIGHT complete desktop website screen miniatures arranged in a strict 2 columns x 4 rows grid, generous gutters, each screenshot aspect ratio 16:9, consistent design. Flat screenshot views, no devices or perspective. White and pale blue surfaces, deep navy typography, royal blue primary actions, restrained teal accents, clean Inter-like font, rounded cards, realistic production content. Use short Vietnamese labels and realistic VND prices. Each screen has its large numbered title above it. All eight screens must be distinct and completely visible, no cropped edges. Prioritize coherent UI structure over tiny text. Brand Skyvia visible on each header. Do not include technical frameworks, code, placeholder lorem ipsum, watermarks or presentation decoration. 03 / CHUYẾN ĐI &amp; TRỢ LÝ AI. Screens: 17 Vé của tôi: upcoming past cancelled tabs, flight booking cards, detail links. 18 Chi tiết đặt vé: timeline, HAN-SGN outbound return, passengers, ticket numbers, payment and support controls. 19 Đổi chuyến bay: current itinerary, alternative date and flight choices, fare difference and explicit confirmation. 20 Hủy vé &amp; hoàn tiền: eligibility, fee and refund preview, reason, confirm dialog, refund status. 21 Hồ sơ &amp; bảo mật: name contact, saved travelers tab, password and active sessions section. 22 Thông báo &amp; ưu đãi: notification inbox and promotional offer cards with tabs. 23 Chatbot AI: full page chat, Vietnamese request Hanoi to Da Nang under 3 million, flight result cards, cited baggage policy answer, right trip context, confirmation required. 24 Trung tâm hỗ trợ: FAQ search, support ticket form, prior tickets status and live agent escalation.</p>
+<h2>Board 4</h2>
+<p>Use case: ui-mockup. Create one polished high resolution landscape UI presentation board for Skyvia, a Vietnamese flight booking platform with AI copilot. Exactly EIGHT complete desktop website screen miniatures arranged in a strict 2 columns x 4 rows grid, generous gutters, each screenshot aspect ratio 16:9, consistent design. Flat screenshot views, no devices or perspective. White and pale blue surfaces, deep navy typography, royal blue primary actions, restrained teal accents, clean Inter-like font, rounded cards, realistic production content. Use short Vietnamese labels and realistic VND prices. Each screen has its large numbered title above it. All eight screens must be distinct and completely visible, no cropped edges. Prioritize coherent UI structure over tiny text. Brand Skyvia visible on each header. Do not include technical frameworks, code, placeholder lorem ipsum, watermarks or presentation decoration. 04 / QUẢN TRỊ &amp; CHĂM SÓC KHÁCH HÀNG. Screens: 25 Tổng quan quản trị: dark navy sidebar, KPI bookings revenue issuance issues, trend chart, pending tasks. 26 Quản lý đặt vé: filterable data table, statuses, booking detail side drawer, manual ticket issue action. 27 Danh mục &amp; nhà cung cấp: airports airlines routes tabs, supplier health and sync status, editing drawer. 28 Giao dịch &amp; hoàn tiền: payment table, refund requests, mismatch reconciliation queue and details. 29 Khách hàng &amp; phân quyền: users table, role badges CUSTOMER SUPPORT ADMIN, role permissions panel. 30 Ưu đãi &amp; nội dung: coupon form, promotion table, banner preview, publishing status. 31 Hộp thư chăm sóc: conversation queue left, central live conversation with human agent, booking context right, case status controls. 32 Tri thức AI &amp; cấu hình: knowledge document table, draft published versions, retrieval test panel, chatbot quality metrics, integrations settings tab.</p></article></main></html>
