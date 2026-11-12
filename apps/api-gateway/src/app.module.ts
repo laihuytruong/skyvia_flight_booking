@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { SharedHttpModule } from '@packages/common';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { AuthModule } from './auth/auth.module.js';
@@ -12,6 +13,7 @@ import { AuthModule } from './auth/auth.module.js';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    SharedHttpModule.forRoot('api-gateway'),
     ThrottlerModule.forRoot([
       {
         ttl: 60_000,

@@ -47,7 +47,7 @@ export class AuthService {
 
       return {
         message: 'Account created. Email verification is pending.',
-        user,
+        data: user,
       };
     } catch (error: unknown) {
       if (

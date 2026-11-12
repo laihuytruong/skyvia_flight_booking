@@ -6,7 +6,44 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { HTTP_HEADERS, HTTP_STATUS } from '@packages/common';
+import type { RegisterResponse } from './auth-response.js';
 import { RegisterDto } from './dto/register.dto.js';
+
+function isRegisterResponse(
+  value: unknown,
+): value is RegisterResponse {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    return false;
+  }
+
+  const response = value as Record<string, unknown>;
+  const user = response.data;
+
+  if (
+    response.success !== true ||
+    typeof response.message !== 'string' ||
+    typeof user !== 'object' ||
+    user === null ||
+    Array.isArray(user)
+  ) {
+    return false;
+  }
+
+  const registeredUser = user as Record<string, unknown>;
+
+  return (
+    typeof registeredUser.id === 'string' &&
+    typeof registeredUser.email === 'string' &&
+    typeof registeredUser.fullName === 'string' &&
+    typeof registeredUser.status === 'string' &&
+    typeof registeredUser.createdAt === 'string'
+  );
+}
 
 @Injectable()
 export class AuthService {
@@ -16,7 +53,7 @@ export class AuthService {
     this.identityServiceUrl = config.getOrThrow<string>('IDENTITY_SERVICE_URL');
   }
 
-  async register(dto: RegisterDto): Promise<unknown> {
+  async register(dto: RegisterDto): Promise<RegisterResponse> {
     const signal = AbortSignal.timeout(5000);
 
     let response: Response;
@@ -27,7 +64,7 @@ export class AuthService {
         {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
+            [HTTP_HEADERS.CONTENT_TYPE]: 'application/json',
           },
           body: JSON.stringify({
             email: dto.email,
@@ -49,9 +86,9 @@ export class AuthService {
     }
 
     if (
-      response.status !== 201 &&
-      response.status !== 400 &&
-      response.status !== 409
+      response.status !== HTTP_STATUS.CREATED &&
+      response.status !== HTTP_STATUS.BAD_REQUEST &&
+      response.status !== HTTP_STATUS.CONFLICT
     ) {
       throw new BadGatewayException(
         'Unexpected response from Identity service',
@@ -72,7 +109,13 @@ export class AuthService {
       throw new BadGatewayException('Invalid response from Identity service');
     }
 
-    if (response.status === 201) {
+    if (response.status === HTTP_STATUS.CREATED) {
+      if (!isRegisterResponse(body)) {
+        throw new BadGatewayException(
+          'Invalid success response from Identity service',
+        );
+      }
+
       return body;
     }
 
