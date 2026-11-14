@@ -6,9 +6,13 @@ import {
   loadRsaPublicKey,
   parseAuthClaims,
   readAuthCookie,
-  readBearerToken,
 } from '@packages/common';
+import type { AuthClaims } from '@packages/common';
 import type { Request } from 'express';
+
+export type GatewayAuthRequest = Request & {
+  auth: AuthClaims;
+};
 
 @Injectable()
 export class AccessTokenGuard implements CanActivate {
@@ -30,12 +34,17 @@ export class AccessTokenGuard implements CanActivate {
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest<Request>();
+    const request = context.switchToHttp().getRequest<GatewayAuthRequest>();
 
     try {
-      const token =
-        readAuthCookie(request.headers.cookie, 'ACCESS_TOKEN') ??
-        readBearerToken(request.headers.authorization);
+      const token = readAuthCookie(
+        request.headers.cookie,
+        'ACCESS_TOKEN',
+      );
+
+      if (!token) {
+        throw new UnauthorizedException('Access token is missing');
+      }
 
       const payload = await this.jwt.verifyAsync<Record<string, unknown>>(
         token,
@@ -47,7 +56,7 @@ export class AccessTokenGuard implements CanActivate {
         },
       );
 
-      parseAuthClaims(payload, 'access');
+      request.auth = parseAuthClaims(payload, 'access');
 
       return true;
     } catch {

@@ -17,13 +17,19 @@ export class AuthService {
 
   async forward(
     path: string,
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
     body?: object,
     authorization?: string,
+    client?: {
+      ip?: string;
+      userAgent?: string;
+    },
   ) {
     const signal = AbortSignal.timeout(60_000);
 
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+    };
 
     if (body) {
       headers['Content-Type'] = 'application/json';
@@ -31,6 +37,14 @@ export class AuthService {
 
     if (authorization) {
       headers.Authorization = authorization;
+    }
+
+    if (client?.ip) {
+      headers['X-Client-IP'] = client.ip;
+    }
+
+    if (client?.userAgent) {
+      headers['User-Agent'] = client.userAgent.slice(0, 512);
     }
 
     let response: Response;

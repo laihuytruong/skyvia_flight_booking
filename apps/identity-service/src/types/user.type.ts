@@ -5,6 +5,7 @@ export interface LockedUser {
   passwordHash: string | null;
   status: string;
   emailVerifiedAt: Date | null;
+  role: USER_ROLES;
 }
 
 export interface PublicUser {
@@ -12,6 +13,7 @@ export interface PublicUser {
   email: string;
   fullName: string;
   status: string;
+  role: USER_ROLES;
 }
 
 export interface TokenPair {
@@ -30,3 +32,24 @@ export type RefreshResult =
   | {
       ok: false;
     };
+
+export interface Session {
+  id: string;
+  userId: string;
+  refreshId: string;
+  userAgent: string | null;
+  ipAddress: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export enum USER_ROLES {
+  CUSTOMER = 'CUSTOMER',
+  SUPPORT = 'SUPPORT',
+  ADMIN = 'ADMIN',
+}
+
+export interface LoginClientInfo {
+  ipAddress?: string;
+  userAgent?: string;
+}

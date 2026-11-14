@@ -20,6 +20,7 @@ import { PrismaService } from '../../prisma/prisma.service.js';
 import { TokenService } from './token.service.js';
 import {
   LockedUser,
+  LoginClientInfo,
   PublicUser,
   RefreshResult,
   TokenPair,
@@ -30,6 +31,7 @@ import { MailService } from '../mail/mail.service.js';
 import { RegisterDto } from './dto/register.dto.js';
 import { LoginDto } from './dto/login.dto.js';
 import type { ResetPasswordDto } from './dto/reset-password.dto.js';
+import { AuthSessionService } from './auth-session.service.js';
 
 @Injectable()
 export class AuthService {
@@ -41,6 +43,7 @@ export class AuthService {
     private readonly mail: MailService,
     private readonly tokens: TokenService,
     config: ConfigService,
+    private readonly sessions: AuthSessionService,
   ) {
     const secret = config.getOrThrow<string>('EMAIL_OTP_SECRET').trim();
 
@@ -51,16 +54,12 @@ export class AuthService {
     this.otpSecret = Buffer.from(secret, 'hex');
   }
 
-  private publicUser(user: {
-    id: string;
-    email: string;
-    fullName: string;
-    status: string;
-  }): PublicUser {
+  private publicUser(user: PublicUser): PublicUser {
     return {
       id: user.id,
       email: user.email,
       fullName: user.fullName,
+      role: user.role,
       status: user.status,
     };
   }
@@ -119,17 +118,18 @@ export class AuthService {
 
     const rows = await tx.$queryRaw<LockedUser[]>(
       Prisma.sql`
-        SELECT
-          id,
-          email,
-          full_name AS "fullName",
-          password_hash AS "passwordHash",
-          status,
-          email_verified_at AS "emailVerifiedAt"
-        FROM identity.users
-        WHERE ${condition}
-        FOR UPDATE
-      `,
+      SELECT
+        id,
+        email,
+        full_name AS "fullName",
+        password_hash AS "passwordHash",
+        role,
+        status,
+        email_verified_at AS "emailVerifiedAt"
+      FROM identity.users
+      WHERE ${condition}
+      FOR UPDATE
+    `,
     );
 
     return rows[0];
@@ -257,12 +257,14 @@ export class AuthService {
             fullName: dto.fullName,
             passwordHash,
             status: 'PENDING',
+            role: 'CUSTOMER',
           },
           select: {
             id: true,
             email: true,
             fullName: true,
             status: true,
+            role: true,
           },
         });
 
@@ -459,7 +461,7 @@ export class AuthService {
     };
   }
 
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto, client: LoginClientInfo = {}) {
     const checkedUser = await this.prisma.user.findUnique({
       where: {
         email: dto.email,
@@ -486,12 +488,30 @@ export class AuthService {
         throw new UnauthorizedException('Account is not available for login');
       }
 
-      const familyId = randomUUID();
+      const now = new Date();
+      const sessionId = randomUUID();
 
       const expiresAt =
-        Math.floor(Date.now() / 1000) + AUTH_CONFIG.REFRESH_TTL_SECONDS;
+        Math.floor(now.getTime() / 1000) + AUTH_CONFIG.REFRESH_TTL_SECONDS;
 
-      const pair = await this.createTokenPair(tx, user.id, familyId, expiresAt);
+      await tx.session.create({
+        data: {
+          id: sessionId,
+          userId: user.id,
+          ipAddress: client.ipAddress ?? null,
+          userAgent: client.userAgent?.slice(0, 512) ?? null,
+          createdAt: now,
+          lastSeenAt: now,
+          expiresAt: new Date(expiresAt * 1000),
+        },
+      });
+
+      const pair = await this.createTokenPair(
+        tx,
+        user.id,
+        sessionId,
+        expiresAt,
+      );
 
       return {
         user: this.publicUser(user),
@@ -519,28 +539,32 @@ export class AuthService {
         const user = await this.lockUser(tx, claims.sub, 'id');
 
         if (!user) {
-          return {
-            ok: false,
-          };
+          return { ok: false };
         }
 
         const now = new Date();
 
         if (user.status !== 'ACTIVE' || !user.emailVerifiedAt) {
-          await tx.verificationToken.updateMany({
-            where: {
-              userId: user.id,
-              purpose: TOKEN_PURPOSE.REFRESH_TOKEN,
-              revokedAt: null,
-            },
-            data: {
-              revokedAt: now,
-            },
-          });
+          await this.sessions.revokeAll(tx, user.id, now);
 
-          return {
-            ok: false,
-          };
+          return { ok: false };
+        }
+
+        const session = await tx.session.findFirst({
+          where: {
+            id: claims.sid,
+            userId: user.id,
+            revokedAt: null,
+            expiresAt: {
+              gt: now,
+            },
+          },
+        });
+
+        if (!session) {
+          await this.sessions.revokeFamily(tx, user.id, claims.sid, now);
+
+          return { ok: false };
         }
 
         const stored = await tx.verificationToken.findFirst({
@@ -548,57 +572,50 @@ export class AuthService {
             id: claims.jti,
             userId: user.id,
             purpose: TOKEN_PURPOSE.REFRESH_TOKEN,
-            familyId: claims.sid,
+            familyId: session.id,
             tokenHash: hash,
           },
         });
 
         if (!stored) {
-          return {
-            ok: false,
-          };
+          return { ok: false };
         }
 
-        if (stored.consumedAt || stored.revokedAt) {
-          await tx.verificationToken.updateMany({
-            where: {
-              userId: user.id,
-              purpose: TOKEN_PURPOSE.REFRESH_TOKEN,
-              familyId: claims.sid,
-              revokedAt: null,
-            },
-            data: {
-              revokedAt: now,
-            },
-          });
+        if (stored.consumedAt || stored.revokedAt || stored.expiresAt <= now) {
+          await this.sessions.revokeFamily(tx, user.id, session.id, now);
 
-          return {
-            ok: false,
-          };
-        }
-
-        if (stored.expiresAt <= now) {
-          return {
-            ok: false,
-          };
+          return { ok: false };
         }
 
         await tx.verificationToken.update({
           where: {
             id: stored.id,
-            purpose: TOKEN_PURPOSE.REFRESH_TOKEN,
           },
           data: {
             consumedAt: now,
           },
         });
 
+        const expiresAt = Math.floor(
+          Math.min(stored.expiresAt.getTime(), session.expiresAt.getTime()) /
+            1000,
+        );
+
         const pair = await this.createTokenPair(
           tx,
           user.id,
-          claims.sid,
-          Math.floor(stored.expiresAt.getTime() / 1000),
+          session.id,
+          expiresAt,
         );
+
+        await tx.session.update({
+          where: {
+            id: session.id,
+          },
+          data: {
+            lastSeenAt: now,
+          },
+        });
 
         return {
           ok: true,
@@ -644,23 +661,16 @@ export class AuthService {
           familyId: claims.sid,
           tokenHash: hash,
         },
+        select: {
+          id: true,
+        },
       });
 
       if (!stored) {
         return;
       }
 
-      await tx.verificationToken.updateMany({
-        where: {
-          userId: user.id,
-          purpose: TOKEN_PURPOSE.REFRESH_TOKEN,
-          familyId: claims.sid,
-          revokedAt: null,
-        },
-        data: {
-          revokedAt: new Date(),
-        },
-      });
+      await this.sessions.revokeFamily(tx, user.id, claims.sid);
     });
 
     return {
@@ -676,11 +686,9 @@ export class AuthService {
         emailVerifiedAt: {
           not: null,
         },
-        verificationTokens: {
+        sessions: {
           some: {
-            purpose: TOKEN_PURPOSE.REFRESH_TOKEN,
-            familyId: claims.sid,
-            consumedAt: null,
+            id: claims.sid,
             revokedAt: null,
             expiresAt: {
               gt: new Date(),
@@ -692,6 +700,7 @@ export class AuthService {
         id: true,
         email: true,
         fullName: true,
+        role: true,
         status: true,
       },
     });
@@ -930,6 +939,8 @@ export class AuthService {
             revokedAt: now,
           },
         });
+
+        await this.sessions.revokeAll(tx, user.id, now);
 
         return true;
       },

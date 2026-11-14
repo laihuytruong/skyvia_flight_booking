@@ -4,6 +4,12 @@ export const TOKEN_PURPOSE = {
   REFRESH_TOKEN: 'REFRESH_TOKEN',
 } as const;
 
+export const USER_ROLES = {
+  CUSTOMER: 'CUSTOMER',
+  SUPPORT: 'SUPPORT',
+  ADMIN: 'ADMIN',
+} as const;
+
 export const AUTH_CONFIG = {
   ACCESS_TTL_SECONDS: 15 * 60,
   REFRESH_TTL_SECONDS: 7 * 24 * 60 * 60,

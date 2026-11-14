@@ -11,6 +11,14 @@ datasource db {
   schemas  = ["identity"]
 }
 
+enum UserRole {
+  CUSTOMER
+  ADMIN
+  SUPPORT
+
+  @@schema("identity")
+}
+
 enum UserStatus {
   PENDING
   ACTIVE
@@ -35,11 +43,13 @@ model User {
   fullName        String     @map("full_name")
   phone           String?
   status          UserStatus @default(PENDING)
+  role            UserRole   @default(CUSTOMER)
   emailVerifiedAt DateTime?  @map("email_verified_at") @db.Timestamptz(6)
   createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   verificationTokens VerificationToken[]
+  sessions           Session[]
 
   @@map("users")
   @@schema("identity")
@@ -63,5 +73,24 @@ model VerificationToken {
   @@index([userId, purpose, familyId])
   @@index([expiresAt])
   @@map("verification_tokens")
+  @@schema("identity")
+}
+
+model Session {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  ipAddress  String?   @map("ip_address") @db.VarChar(45)
+  userAgent  String?   @map("user_agent") @db.VarChar(512)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt, id])
+  @@index([userId, revokedAt, expiresAt])
+  @@index([expiresAt])
+  @@map("sessions")
   @@schema("identity")
 }

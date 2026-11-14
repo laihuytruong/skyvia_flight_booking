@@ -1,32 +1,38 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
-  Headers,
   HttpCode,
   HttpStatus,
+  Param,
+  ParseUUIDPipe,
   Post,
+  Query,
   Req,
   Res,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import {
   clearAuthCookies,
   readAuthCookie,
   setAuthCookies,
 } from '@packages/common';
-import { Throttle } from '@nestjs/throttler';
 import { AccessTokenGuard } from './access-token.guard.js';
+import type { GatewayAuthRequest } from './access-token.guard.js';
 import { AuthService } from './auth.service.js';
-import { RegisterDto } from './dto/register.dto.js';
-import { VerifyEmailDto } from './dto/verify-email.dto.js';
-import { LoginDto } from './dto/login.dto.js';
-import { ResendVerificationDto } from './dto/resend-verification.dto.js';
+import { ChangePasswordDto } from './dto/change-password.dto.js';
 import { ForgotPasswordDto } from './dto/forgot-password.dto.js';
+import { LoginDto } from './dto/login.dto.js';
+import { RegisterDto } from './dto/register.dto.js';
+import { ResendVerificationDto } from './dto/resend-verification.dto.js';
 import { ResetPasswordDto } from './dto/reset-password.dto.js';
-import { ConfigService } from '@nestjs/config';
+import { SessionQueryDto } from './dto/session-query.dto.js';
+import { VerifyEmailDto } from './dto/verify-email.dto.js';
 
 @Controller('auth')
 export class AuthController {
@@ -34,88 +40,79 @@ export class AuthController {
 
   constructor(
     private readonly auth: AuthService,
-    private readonly config: ConfigService,
+    config: ConfigService,
   ) {
-    this.secureCookies = this.config.get<string>('NODE_ENV') === 'production';
+    this.secureCookies = config.get<string>('NODE_ENV') === 'production';
+  }
+
+  private authorization(request: Request): string {
+    const token = readAuthCookie(request.headers.cookie, 'ACCESS_TOKEN');
+
+    if (!token) {
+      throw new UnauthorizedException('Access token is missing');
+    }
+
+    return `Bearer ${token}`;
   }
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
-  @Throttle({
-    default: {
-      limit: 5,
-      ttl: 60_000,
-    },
-  })
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   register(@Body() dto: RegisterDto) {
     return this.auth.forward('/api/v1/auth/register', 'POST', dto);
   }
 
   @Post('verify-email')
   @HttpCode(HttpStatus.OK)
-  @Throttle({
-    default: {
-      limit: 10,
-      ttl: 60_000,
-    },
-  })
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   verifyEmail(@Body() dto: VerifyEmailDto) {
     return this.auth.forward('/api/v1/auth/verify-email', 'POST', dto);
   }
 
   @Post('resend-verification')
   @HttpCode(HttpStatus.ACCEPTED)
-  @Throttle({
-    default: {
-      limit: 3,
-      ttl: 60_000,
-    },
-  })
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
   resend(@Body() dto: ResendVerificationDto) {
     return this.auth.forward('/api/v1/auth/resend-verification', 'POST', dto);
   }
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @Throttle({
-    default: {
-      limit: 5,
-      ttl: 60_000,
-    },
-  })
-  login(@Body() dto: LoginDto, @Res({ passthrough: true }) response: Response) {
-    return this.auth
-      .forward('/api/v1/auth/login', 'POST', dto)
-      .then((result) => {
-        if (!result.accessToken || !result.refreshToken) {
-          throw new Error(
-            'Identity service did not return authentication tokens',
-          );
-        }
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async login(
+    @Body() dto: LoginDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.auth.forward(
+      '/api/v1/auth/login',
+      'POST',
+      dto,
+      undefined,
+      {
+        ip: request.ip,
+        userAgent: request.get('user-agent'),
+      },
+    );
 
-        setAuthCookies(
-          response,
-          result.accessToken,
-          result.refreshToken,
-          process.env.NODE_ENV === 'production',
-        );
+    if (!result.accessToken || !result.refreshToken) {
+      throw new Error('Identity service did not return authentication tokens');
+    }
 
-        const safeResult = { ...result };
-        delete safeResult.accessToken;
-        delete safeResult.refreshToken;
-        return safeResult;
-      });
+    setAuthCookies(
+      response,
+      result.accessToken,
+      result.refreshToken,
+      this.secureCookies,
+    );
+
+    return { message: result.message, data: result.data };
   }
 
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  @Throttle({
-    default: {
-      limit: 10,
-      ttl: 60_000,
-    },
-  })
-  refresh(
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async refresh(
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ) {
@@ -128,90 +125,69 @@ export class AuthController {
       throw new UnauthorizedException('Refresh token is missing');
     }
 
-    return this.auth
-      .forward('/api/v1/auth/refresh', 'POST', { refreshToken })
-      .then((result) => {
-        if (!result.accessToken || !result.refreshToken) {
-          throw new Error(
-            'Identity service did not return authentication tokens',
-          );
-        }
+    const result = await this.auth.forward('/api/v1/auth/refresh', 'POST', {
+      refreshToken,
+    });
 
-        setAuthCookies(
-          response,
-          result.accessToken,
-          result.refreshToken,
-          process.env.NODE_ENV === 'production',
-        );
+    if (!result.accessToken || !result.refreshToken) {
+      throw new Error('Identity service did not return authentication tokens');
+    }
 
-        const safeResult = { ...result };
-        delete safeResult.accessToken;
-        delete safeResult.refreshToken;
-        return safeResult;
-      });
+    setAuthCookies(
+      response,
+      result.accessToken,
+      result.refreshToken,
+      this.secureCookies,
+    );
+
+    return { message: result.message, data: result.data };
   }
 
   @Post('logout')
   @HttpCode(HttpStatus.OK)
-  logout(
+  async logout(
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const refreshToken = readAuthCookie(
-      request.headers.cookie,
-      'REFRESH_TOKEN',
-    );
+    try {
+      const refreshToken = readAuthCookie(
+        request.headers.cookie,
+        'REFRESH_TOKEN',
+      );
 
-    if (!refreshToken) {
-      clearAuthCookies(response, process.env.NODE_ENV === 'production');
+      if (refreshToken) {
+        return await this.auth.forward('/api/v1/auth/logout', 'POST', {
+          refreshToken,
+        });
+      }
+
       return { message: 'Logged out successfully' };
+    } finally {
+      clearAuthCookies(response, this.secureCookies);
     }
-
-    return this.auth
-      .forward('/api/v1/auth/logout', 'POST', { refreshToken })
-      .then((result) => {
-        clearAuthCookies(response, process.env.NODE_ENV === 'production');
-        return result;
-      });
   }
 
   @Get('me')
   @UseGuards(AccessTokenGuard)
-  me(
-    @Req() request: Request,
-    @Headers('authorization')
-    authorization: string,
-  ) {
-    const cookieToken = readAuthCookie(request.headers.cookie, 'ACCESS_TOKEN');
-
+  me(@Req() request: Request) {
     return this.auth.forward(
       '/api/v1/auth/me',
       'GET',
       undefined,
-      cookieToken ? `Bearer ${cookieToken}` : authorization,
+      this.authorization(request),
     );
   }
 
   @Post('forgot-password')
   @HttpCode(HttpStatus.ACCEPTED)
-  @Throttle({
-    default: {
-      limit: 3,
-      ttl: 60_000,
-    },
-  })
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
   forgotPassword(@Body() dto: ForgotPasswordDto) {
     return this.auth.forward('/api/v1/auth/forgot-password', 'POST', dto);
   }
 
   @Post('reset-password')
   @HttpCode(HttpStatus.OK)
-  @Throttle({
-    default: {
-      limit: 5,
-      ttl: 60_000,
-    },
-  })
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   async resetPassword(
     @Body() dto: ResetPasswordDto,
     @Res({ passthrough: true }) response: Response,
@@ -221,8 +197,81 @@ export class AuthController {
       'POST',
       dto,
     );
-
     clearAuthCookies(response, this.secureCookies);
+    return result;
+  }
+
+  @Post('change-password')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AccessTokenGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async changePassword(
+    @Req() request: Request,
+    @Body() dto: ChangePasswordDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.auth.forward(
+      '/api/v1/auth/change-password',
+      'POST',
+      dto,
+      this.authorization(request),
+    );
+    clearAuthCookies(response, this.secureCookies);
+    return result;
+  }
+
+  @Post('logout-all')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AccessTokenGuard)
+  async logoutAll(
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.auth.forward(
+      '/api/v1/auth/logout-all',
+      'POST',
+      undefined,
+      this.authorization(request),
+    );
+    clearAuthCookies(response, this.secureCookies);
+    return result;
+  }
+
+  @Get('sessions')
+  @UseGuards(AccessTokenGuard)
+  sessions(@Req() request: Request, @Query() query: SessionQueryDto) {
+    const params = new URLSearchParams({
+      limit: String(query.limit ?? 20),
+    });
+
+    params.set('page', String(query.page ?? 1));
+
+    return this.auth.forward(
+      `/api/v1/auth/sessions?${params.toString()}`,
+      'GET',
+      undefined,
+      this.authorization(request),
+    );
+  }
+
+  @Delete('sessions/:sessionId')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AccessTokenGuard)
+  async revokeSession(
+    @Req() request: GatewayAuthRequest,
+    @Param('sessionId', new ParseUUIDPipe()) sessionId: string,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.auth.forward(
+      `/api/v1/auth/sessions/${sessionId}`,
+      'DELETE',
+      undefined,
+      this.authorization(request),
+    );
+
+    if (sessionId === request.auth.sid) {
+      clearAuthCookies(response, this.secureCookies);
+    }
 
     return result;
   }
