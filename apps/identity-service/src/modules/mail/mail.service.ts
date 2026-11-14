@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 import { verificationEmailTemplate } from './templates/verification-email.template.js';
+import { passwordResetEmailTemplate } from './templates/password-reset-email.template.js';
 
 interface VerificationEmail {
   to: string;
@@ -37,13 +38,37 @@ export class MailService implements OnModuleDestroy {
   async sendVerificationEmail(input: VerificationEmail): Promise<void> {
     const template = verificationEmailTemplate(input);
 
-    await this.transporter.sendMail({
+    const result = await this.transporter.sendMail({
       from: this.from,
       to: input.to,
       subject: template.subject,
       text: template.text,
       html: template.html,
     });
+
+    if (!result.accepted?.length) {
+      throw new Error('SMTP server did not accept the recipient');
+    }
+  }
+
+  async sendPasswordResetEmail(input: {
+    to: string;
+    code: string;
+    expiresAt: Date;
+  }): Promise<void> {
+    const template = passwordResetEmailTemplate(input);
+
+    const result = await this.transporter.sendMail({
+      from: this.from,
+      to: input.to,
+      subject: template.subject,
+      text: template.text,
+      html: template.html,
+    });
+
+    if (!result.accepted?.length) {
+      throw new Error('SMTP server did not accept the recipient');
+    }
   }
 
   onModuleDestroy(): void {

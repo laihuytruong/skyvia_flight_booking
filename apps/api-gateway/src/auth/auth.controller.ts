@@ -24,10 +24,20 @@ import { RegisterDto } from './dto/register.dto.js';
 import { VerifyEmailDto } from './dto/verify-email.dto.js';
 import { LoginDto } from './dto/login.dto.js';
 import { ResendVerificationDto } from './dto/resend-verification.dto.js';
+import { ForgotPasswordDto } from './dto/forgot-password.dto.js';
+import { ResetPasswordDto } from './dto/reset-password.dto.js';
+import { ConfigService } from '@nestjs/config';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  private readonly secureCookies: boolean;
+
+  constructor(
+    private readonly auth: AuthService,
+    private readonly config: ConfigService,
+  ) {
+    this.secureCookies = this.config.get<string>('NODE_ENV') === 'production';
+  }
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
@@ -62,11 +72,7 @@ export class AuthController {
     },
   })
   resend(@Body() dto: ResendVerificationDto) {
-    return this.auth.forward(
-      '/api/v1/auth/resend-verification',
-      'POST',
-      dto,
-    );
+    return this.auth.forward('/api/v1/auth/resend-verification', 'POST', dto);
   }
 
   @Post('login')
@@ -78,23 +84,27 @@ export class AuthController {
     },
   })
   login(@Body() dto: LoginDto, @Res({ passthrough: true }) response: Response) {
-    return this.auth.forward('/api/v1/auth/login', 'POST', dto).then((result) => {
-      if (!result.accessToken || !result.refreshToken) {
-        throw new Error('Identity service did not return authentication tokens');
-      }
+    return this.auth
+      .forward('/api/v1/auth/login', 'POST', dto)
+      .then((result) => {
+        if (!result.accessToken || !result.refreshToken) {
+          throw new Error(
+            'Identity service did not return authentication tokens',
+          );
+        }
 
-      setAuthCookies(
-        response,
-        result.accessToken,
-        result.refreshToken,
-        process.env.NODE_ENV === 'production',
-      );
+        setAuthCookies(
+          response,
+          result.accessToken,
+          result.refreshToken,
+          process.env.NODE_ENV === 'production',
+        );
 
-      const safeResult = { ...result };
-      delete safeResult.accessToken;
-      delete safeResult.refreshToken;
-      return safeResult;
-    });
+        const safeResult = { ...result };
+        delete safeResult.accessToken;
+        delete safeResult.refreshToken;
+        return safeResult;
+      });
   }
 
   @Post('refresh')
@@ -172,10 +182,7 @@ export class AuthController {
     @Headers('authorization')
     authorization: string,
   ) {
-    const cookieToken = readAuthCookie(
-      request.headers.cookie,
-      'ACCESS_TOKEN',
-    );
+    const cookieToken = readAuthCookie(request.headers.cookie, 'ACCESS_TOKEN');
 
     return this.auth.forward(
       '/api/v1/auth/me',
@@ -183,5 +190,40 @@ export class AuthController {
       undefined,
       cookieToken ? `Bearer ${cookieToken}` : authorization,
     );
+  }
+
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Throttle({
+    default: {
+      limit: 3,
+      ttl: 60_000,
+    },
+  })
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.auth.forward('/api/v1/auth/forgot-password', 'POST', dto);
+  }
+
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({
+    default: {
+      limit: 5,
+      ttl: 60_000,
+    },
+  })
+  async resetPassword(
+    @Body() dto: ResetPasswordDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.auth.forward(
+      '/api/v1/auth/reset-password',
+      'POST',
+      dto,
+    );
+
+    clearAuthCookies(response, this.secureCookies);
+
+    return result;
   }
 }

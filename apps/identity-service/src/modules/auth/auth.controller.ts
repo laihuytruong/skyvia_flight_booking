@@ -16,6 +16,8 @@ import { VerifyEmailDto } from './dto/verify-email.dto.js';
 import { LoginDto } from './dto/login.dto.js';
 import { ResendVerificationDto } from './dto/resend-verification.dto.js';
 import { RefreshTokenDto } from './dto/refresh-token.dto.js';
+import { ForgotPasswordDto } from './dto/forgot-password.dto.js';
+import { ResetPasswordDto } from './dto/reset-password.dto.js';
 
 @Controller('auth')
 export class AuthController {
@@ -61,5 +63,17 @@ export class AuthController {
   @UseGuards(IdentityAccessGuard)
   me(@Req() request: IdentityAuthRequest) {
     return this.auth.me(request.auth);
+  }
+
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.ACCEPTED)
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.auth.forgotPassword(dto.email);
+  }
+
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.auth.resetPassword(dto);
   }
 }

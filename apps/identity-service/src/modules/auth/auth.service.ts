@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -28,10 +29,12 @@ import { AUTH_CONFIG, TOKEN_PURPOSE } from '../../constants/constant.js';
 import { MailService } from '../mail/mail.service.js';
 import { RegisterDto } from './dto/register.dto.js';
 import { LoginDto } from './dto/login.dto.js';
+import type { ResetPasswordDto } from './dto/reset-password.dto.js';
 
 @Injectable()
 export class AuthService {
   private readonly otpSecret: Buffer;
+  private readonly logger = new Logger(AuthService.name);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -79,6 +82,27 @@ export class AuthService {
 
     return timingSafeEqual(
       Buffer.from(this.hashOtp(id, code), 'hex'),
+      Buffer.from(hash, 'hex'),
+    );
+  }
+
+  private hashPasswordResetOtp(id: string, code: string): string {
+    return createHmac('sha256', this.otpSecret)
+      .update(`reset-password:${id}:${code}`)
+      .digest('hex');
+  }
+
+  private matchesPasswordResetOtp(
+    id: string,
+    code: string,
+    hash: string,
+  ): boolean {
+    if (!/^\d{6}$/.test(code) || !/^[a-f0-9]{64}$/.test(hash)) {
+      return false;
+    }
+
+    return timingSafeEqual(
+      Buffer.from(this.hashPasswordResetOtp(id, code), 'hex'),
       Buffer.from(hash, 'hex'),
     );
   }
@@ -680,6 +704,249 @@ export class AuthService {
       data: {
         user,
       },
+    };
+  }
+
+  async forgotPassword(email: string) {
+    const mail = await this.prisma.$transaction(
+      async (tx): Promise<OtpMail | null> => {
+        const user = await this.lockUser(tx, email, 'email');
+
+        if (
+          !user ||
+          user.status !== 'ACTIVE' ||
+          !user.emailVerifiedAt ||
+          !user.passwordHash
+        ) {
+          return null;
+        }
+
+        const now = new Date();
+
+        const latest = await tx.verificationToken.findFirst({
+          where: {
+            userId: user.id,
+            purpose: TOKEN_PURPOSE.PASSWORD_RESET,
+          },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        });
+
+        if (
+          latest &&
+          now.getTime() - latest.createdAt.getTime() <
+            AUTH_CONFIG.RESEND_COOLDOWN_MS
+        ) {
+          return null;
+        }
+
+        const count = await tx.verificationToken.count({
+          where: {
+            userId: user.id,
+            purpose: TOKEN_PURPOSE.PASSWORD_RESET,
+            createdAt: {
+              gte: new Date(now.getTime() - 60 * 60_000),
+            },
+          },
+        });
+
+        if (count >= AUTH_CONFIG.MAX_EMAIL_CODES_PER_HOUR) {
+          return null;
+        }
+
+        const recent = await tx.verificationToken.findMany({
+          where: {
+            userId: user.id,
+            purpose: TOKEN_PURPOSE.PASSWORD_RESET,
+            expiresAt: {
+              gt: now,
+            },
+          },
+          select: {
+            id: true,
+            tokenHash: true,
+          },
+        });
+
+        await tx.verificationToken.updateMany({
+          where: {
+            userId: user.id,
+            purpose: TOKEN_PURPOSE.PASSWORD_RESET,
+            consumedAt: null,
+            revokedAt: null,
+          },
+          data: {
+            revokedAt: now,
+          },
+        });
+
+        const id = randomUUID();
+
+        let code: string;
+
+        do {
+          code = randomInt(0, 1_000_000).toString().padStart(6, '0');
+        } while (
+          recent.some((token) =>
+            this.matchesPasswordResetOtp(token.id, code, token.tokenHash),
+          )
+        );
+
+        const expiresAt = new Date(now.getTime() + AUTH_CONFIG.OTP_TTL_MS);
+
+        await tx.verificationToken.create({
+          data: {
+            id,
+            userId: user.id,
+            purpose: TOKEN_PURPOSE.PASSWORD_RESET,
+            tokenHash: this.hashPasswordResetOtp(id, code),
+            expiresAt,
+            createdAt: now,
+          },
+        });
+
+        return {
+          to: user.email,
+          code,
+          expiresAt,
+        };
+      },
+    );
+
+    if (mail) {
+      try {
+        await this.mail.sendPasswordResetEmail(mail);
+      } catch {
+        this.logger.error('Password reset email delivery failed');
+      }
+    }
+
+    return {
+      message:
+        'If the account is eligible, a password reset code will be sent. Please wait at least 60 seconds before requesting another code.',
+    };
+  }
+
+  async resetPassword(dto: ResetPasswordDto) {
+    if (
+      Buffer.byteLength(dto.newPassword, 'utf8') > AUTH_CONFIG.BCRYPT_MAX_BYTES
+    ) {
+      throw new BadRequestException({
+        message: 'Password must not exceed 72 UTF-8 bytes',
+        errors: {
+          newPassword: ['Password must not exceed 72 UTF-8 bytes'],
+        },
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(
+      dto.newPassword,
+      AUTH_CONFIG.BCRYPT_ROUNDS,
+    );
+
+    const success = await this.prisma.$transaction(
+      async (tx): Promise<boolean> => {
+        const user = await this.lockUser(tx, dto.email, 'email');
+
+        if (
+          !user ||
+          user.status !== 'ACTIVE' ||
+          !user.emailVerifiedAt ||
+          !user.passwordHash
+        ) {
+          return false;
+        }
+
+        const now = new Date();
+
+        const token = await tx.verificationToken.findFirst({
+          where: {
+            userId: user.id,
+            purpose: TOKEN_PURPOSE.PASSWORD_RESET,
+            consumedAt: null,
+            revokedAt: null,
+          },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        });
+
+        if (
+          !token ||
+          token.expiresAt <= now ||
+          token.attempts >= AUTH_CONFIG.OTP_MAX_ATTEMPTS
+        ) {
+          return false;
+        }
+
+        const valid = this.matchesPasswordResetOtp(
+          token.id,
+          dto.code,
+          token.tokenHash,
+        );
+
+        if (!valid) {
+          const attempts = token.attempts + 1;
+
+          await tx.verificationToken.update({
+            where: {
+              id: token.id,
+            },
+            data: {
+              attempts,
+              ...(attempts >= AUTH_CONFIG.OTP_MAX_ATTEMPTS
+                ? { revokedAt: now }
+                : {}),
+            },
+          });
+
+          return false;
+        }
+
+        await tx.user.update({
+          where: {
+            id: user.id,
+          },
+          data: {
+            passwordHash,
+          },
+        });
+
+        await tx.verificationToken.update({
+          where: {
+            id: token.id,
+          },
+          data: {
+            consumedAt: now,
+          },
+        });
+
+        await tx.verificationToken.updateMany({
+          where: {
+            userId: user.id,
+            purpose: {
+              in: [TOKEN_PURPOSE.REFRESH_TOKEN, TOKEN_PURPOSE.PASSWORD_RESET],
+            },
+            revokedAt: null,
+          },
+          data: {
+            revokedAt: now,
+          },
+        });
+
+        return true;
+      },
+    );
+
+    if (!success) {
+      throw new BadRequestException({
+        message: 'Invalid or expired password reset code',
+        errors: {
+          code: ['Invalid or expired password reset code'],
+        },
+      });
+    }
+
+    return {
+      message:
+        'Password reset successfully. Please log in with your new password.',
     };
   }
 }
