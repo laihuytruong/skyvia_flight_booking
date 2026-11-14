@@ -3,8 +3,8 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { randomUUID } from 'node:crypto';
-import { AUTH_CONFIG } from '../../constants/constant.js';
-import { TokenPair } from '../../types/user.type.js';
+import { AUTH_CONFIG } from './constants/auth.constants.js';
+import type { TokenPair } from './types/token.type.js';
 
 @Injectable()
 export class TokenService {

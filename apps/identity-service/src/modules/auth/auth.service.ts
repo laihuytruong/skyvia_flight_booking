@@ -18,20 +18,19 @@ import {
 import { Prisma } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { TokenService } from './token.service.js';
-import {
-  LockedUser,
-  LoginClientInfo,
-  PublicUser,
-  RefreshResult,
-  TokenPair,
-} from '../../types/user.type.js';
-import { OtpMail } from '../../types/mail.type.js';
-import { AUTH_CONFIG, TOKEN_PURPOSE } from '../../constants/constant.js';
+import type { RefreshResult, TokenPair } from './types/token.type.js';
+import type { LoginClientInfo } from './types/login-client-info.type.js';
+import type { PublicUser } from './types/user.type.js';
+import type { OtpMail } from '../mail/types/mail.type.js';
+import type { LockedUser } from '../sessions/types/session.type.js';
+import { AUTH_CONFIG, TOKEN_PURPOSE } from './constants/auth.constants.js';
 import { MailService } from '../mail/mail.service.js';
-import { RegisterDto } from './dto/register.dto.js';
-import { LoginDto } from './dto/login.dto.js';
-import type { ResetPasswordDto } from './dto/reset-password.dto.js';
-import { AuthSessionService } from './auth-session.service.js';
+import { SessionService } from '../sessions/session.service.js';
+import {
+  LoginDto,
+  RegisterDto,
+  ResetPasswordDto,
+} from '@packages/contracts';
 
 @Injectable()
 export class AuthService {
@@ -43,7 +42,7 @@ export class AuthService {
     private readonly mail: MailService,
     private readonly tokens: TokenService,
     config: ConfigService,
-    private readonly sessions: AuthSessionService,
+    private readonly sessions: SessionService,
   ) {
     const secret = config.getOrThrow<string>('EMAIL_OTP_SECRET').trim();
 

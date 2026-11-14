@@ -4,7 +4,7 @@ import { readBearerToken } from '@packages/common';
 import type { AuthClaims } from '@packages/common';
 import type { Request } from 'express';
 import type { UserRole } from '../../generated/prisma/client.js';
-import { AuthSessionService } from './auth-session.service.js';
+import { SessionService } from '../sessions/session.service.js';
 import { TokenService } from './token.service.js';
 
 export type IdentityAuthRequest = Request & {
@@ -19,7 +19,7 @@ export type IdentityAuthRequest = Request & {
 export class IdentityAccessGuard implements CanActivate {
   constructor(
     private readonly tokens: TokenService,
-    private readonly sessions: AuthSessionService,
+    private readonly sessions: SessionService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
