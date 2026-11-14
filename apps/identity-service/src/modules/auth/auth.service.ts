@@ -2,65 +2,684 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  UnauthorizedException,
 } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service.js';
+import { ConfigService } from '@nestjs/config';
+import type { AuthClaims } from '@packages/common';
 import * as bcrypt from 'bcrypt';
-import { RegisterDto } from './dto/register.dto.js';
 import {
-  BCRYPT_MAX_PASSWORD_BYTES,
-  BCRYPT_ROUNDS,
-} from '../../constants/constant.js';
+  createHash,
+  createHmac,
+  randomInt,
+  randomUUID,
+  timingSafeEqual,
+} from 'node:crypto';
 import { Prisma } from '../../generated/prisma/client.js';
+import { PrismaService } from '../../prisma/prisma.service.js';
+import { TokenService } from './token.service.js';
+import {
+  LockedUser,
+  PublicUser,
+  RefreshResult,
+  TokenPair,
+} from '../../types/user.type.js';
+import { OtpMail } from '../../types/mail.type.js';
+import { AUTH_CONFIG, TOKEN_PURPOSE } from '../../constants/constant.js';
+import { MailService } from '../mail/mail.service.js';
+import { RegisterDto } from './dto/register.dto.js';
+import { LoginDto } from './dto/login.dto.js';
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly otpSecret: Buffer;
 
-  async registerUser(dto: RegisterDto) {
-    const passwordBytes = Buffer.byteLength(dto.password, 'utf-8');
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mail: MailService,
+    private readonly tokens: TokenService,
+    config: ConfigService,
+  ) {
+    const secret = config.getOrThrow<string>('EMAIL_OTP_SECRET').trim();
 
-    if (passwordBytes > BCRYPT_MAX_PASSWORD_BYTES) {
+    if (!/^[a-fA-F0-9]{64}$/.test(secret)) {
+      throw new Error('EMAIL_OTP_SECRET must contain 64 hex characters');
+    }
+
+    this.otpSecret = Buffer.from(secret, 'hex');
+  }
+
+  private publicUser(user: {
+    id: string;
+    email: string;
+    fullName: string;
+    status: string;
+  }): PublicUser {
+    return {
+      id: user.id,
+      email: user.email,
+      fullName: user.fullName,
+      status: user.status,
+    };
+  }
+
+  private hashRefreshToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
+  private hashOtp(id: string, code: string): string {
+    return createHmac('sha256', this.otpSecret)
+      .update(`verify-email:${id}:${code}`)
+      .digest('hex');
+  }
+
+  private matchesOtp(id: string, code: string, hash: string): boolean {
+    if (!/^\d{6}$/.test(code) || !/^[a-f0-9]{64}$/.test(hash)) {
+      return false;
+    }
+
+    return timingSafeEqual(
+      Buffer.from(this.hashOtp(id, code), 'hex'),
+      Buffer.from(hash, 'hex'),
+    );
+  }
+
+  private async lockUser(
+    tx: Prisma.TransactionClient,
+    value: string,
+    by: 'id' | 'email',
+  ): Promise<LockedUser | undefined> {
+    const condition =
+      by === 'id'
+        ? Prisma.sql`id = ${value}::uuid`
+        : Prisma.sql`email = ${value}`;
+
+    const rows = await tx.$queryRaw<LockedUser[]>(
+      Prisma.sql`
+        SELECT
+          id,
+          email,
+          full_name AS "fullName",
+          password_hash AS "passwordHash",
+          status,
+          email_verified_at AS "emailVerifiedAt"
+        FROM identity.users
+        WHERE ${condition}
+        FOR UPDATE
+      `,
+    );
+
+    return rows[0];
+  }
+
+  private async createOtp(
+    tx: Prisma.TransactionClient,
+    user: {
+      id: string;
+      email: string;
+    },
+  ): Promise<OtpMail> {
+    const now = new Date();
+
+    const recent = await tx.verificationToken.findMany({
+      where: {
+        userId: user.id,
+        purpose: TOKEN_PURPOSE.EMAIL_VERIFICATION,
+        expiresAt: {
+          gt: now,
+        },
+      },
+      select: {
+        id: true,
+        tokenHash: true,
+      },
+    });
+
+    await tx.verificationToken.updateMany({
+      where: {
+        userId: user.id,
+        purpose: TOKEN_PURPOSE.EMAIL_VERIFICATION,
+        consumedAt: null,
+        revokedAt: null,
+      },
+      data: {
+        revokedAt: now,
+      },
+    });
+
+    const id = randomUUID();
+
+    let code: string;
+
+    do {
+      code = randomInt(0, 1_000_000).toString().padStart(6, '0');
+    } while (
+      recent.some((token) => this.matchesOtp(token.id, code, token.tokenHash))
+    );
+
+    const expiresAt = new Date(now.getTime() + AUTH_CONFIG.OTP_TTL_MS);
+
+    await tx.verificationToken.create({
+      data: {
+        id,
+        userId: user.id,
+        purpose: TOKEN_PURPOSE.EMAIL_VERIFICATION,
+        tokenHash: this.hashOtp(id, code),
+        expiresAt,
+        createdAt: now,
+      },
+    });
+
+    return {
+      to: user.email,
+      code,
+      expiresAt,
+    };
+  }
+
+  private async sendOtp(mail: OtpMail): Promise<boolean> {
+    try {
+      await this.mail.sendVerificationEmail(mail);
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async createTokenPair(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    familyId: string,
+    expiresAt: number,
+  ): Promise<TokenPair> {
+    const pair = await this.tokens.issue(userId, familyId, expiresAt);
+
+    await tx.verificationToken.create({
+      data: {
+        id: pair.refreshId,
+        userId,
+        purpose: TOKEN_PURPOSE.REFRESH_TOKEN,
+        familyId,
+        tokenHash: this.hashRefreshToken(pair.refreshToken),
+        expiresAt: pair.expiresAt,
+      },
+    });
+
+    return pair;
+  }
+
+  async register(dto: RegisterDto) {
+    if (
+      Buffer.byteLength(dto.password, 'utf8') > AUTH_CONFIG.BCRYPT_MAX_BYTES
+    ) {
       throw new BadRequestException({
-        code: 'PASSWORD_TOO_LONG',
         message: 'Password must not exceed 72 UTF-8 bytes',
+        errors: {
+          password: ['Password must not exceed 72 UTF-8 bytes'],
+        },
       });
     }
 
-    const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
+    const passwordHash = await bcrypt.hash(
+      dto.password,
+      AUTH_CONFIG.BCRYPT_ROUNDS,
+    );
 
-    try {
-      const user = await this.prisma.user.create({
-        data: {
-          email: dto.email,
-          passwordHash,
-          fullName: dto.fullName,
-          status: 'PENDING',
-        },
-        select: {
-          id: true,
-          email: true,
-          fullName: true,
-          status: true,
-          createdAt: true,
-        },
+    const result = await this.prisma
+      .$transaction(async (tx) => {
+        const user = await tx.user.create({
+          data: {
+            email: dto.email,
+            fullName: dto.fullName,
+            passwordHash,
+            status: 'PENDING',
+          },
+          select: {
+            id: true,
+            email: true,
+            fullName: true,
+            status: true,
+          },
+        });
+
+        const mail = await this.createOtp(tx, user);
+
+        return {
+          user,
+          mail,
+        };
+      })
+      .catch((error: unknown) => {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          throw new ConflictException({
+            message: 'Email is already registered',
+            errors: {
+              email: ['Email is already registered'],
+            },
+          });
+        }
+
+        throw error;
       });
 
-      return {
-        message: 'Account created. Email verification is pending.',
-        data: user,
-      };
-    } catch (error: unknown) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        throw new ConflictException({
-          code: 'EMAIL_ALREADY_EXISTS',
-          message: 'Email is already registered',
+    const emailAccepted = await this.sendOtp(result.mail);
+
+    return {
+      message: emailAccepted
+        ? 'Account created. Please check your verification email.'
+        : 'Account created. Email could not be sent. Please request a new code.',
+      data: {
+        user: result.user,
+        verificationEmailAccepted: emailAccepted,
+      },
+    };
+  }
+
+  async resendVerification(email: string) {
+    const mail = await this.prisma.$transaction(
+      async (tx): Promise<OtpMail | null> => {
+        const user = await this.lockUser(tx, email, 'email');
+
+        if (!user || user.status !== 'PENDING') {
+          return null;
+        }
+
+        const now = new Date();
+
+        const latest = await tx.verificationToken.findFirst({
+          where: {
+            userId: user.id,
+            purpose: TOKEN_PURPOSE.EMAIL_VERIFICATION,
+          },
+          orderBy: [
+            {
+              createdAt: 'desc',
+            },
+            {
+              id: 'desc',
+            },
+          ],
         });
+
+        if (
+          latest &&
+          now.getTime() - latest.createdAt.getTime() <
+            AUTH_CONFIG.RESEND_COOLDOWN_MS
+        ) {
+          return null;
+        }
+
+        const count = await tx.verificationToken.count({
+          where: {
+            userId: user.id,
+            purpose: TOKEN_PURPOSE.EMAIL_VERIFICATION,
+            createdAt: {
+              gte: new Date(now.getTime() - 60 * 60_000),
+            },
+          },
+        });
+
+        if (count >= AUTH_CONFIG.MAX_EMAIL_CODES_PER_HOUR) {
+          return null;
+        }
+
+        return this.createOtp(tx, user);
+      },
+    );
+
+    if (mail) {
+      await this.sendOtp(mail);
+    }
+
+    return {
+      message:
+        'If the account is eligible, a verification email will be sent. Please wait at least 60 seconds before requesting another code.',
+    };
+  }
+
+  async verifyEmail(email: string, code: string) {
+    const verified = await this.prisma.$transaction(async (tx) => {
+      const user = await this.lockUser(tx, email, 'email');
+
+      if (!user || user.status !== 'PENDING') {
+        return false;
       }
 
-      throw error;
+      const now = new Date();
+
+      const token = await tx.verificationToken.findFirst({
+        where: {
+          userId: user.id,
+          purpose: TOKEN_PURPOSE.EMAIL_VERIFICATION,
+          consumedAt: null,
+          revokedAt: null,
+        },
+        orderBy: [
+          {
+            createdAt: 'desc',
+          },
+          {
+            id: 'desc',
+          },
+        ],
+      });
+
+      if (
+        !token ||
+        token.expiresAt <= now ||
+        token.attempts >= AUTH_CONFIG.OTP_MAX_ATTEMPTS
+      ) {
+        return false;
+      }
+
+      const valid = this.matchesOtp(token.id, code, token.tokenHash);
+
+      if (!valid) {
+        const attempts = token.attempts + 1;
+
+        await tx.verificationToken.update({
+          where: {
+            id: token.id,
+            purpose: TOKEN_PURPOSE.EMAIL_VERIFICATION,
+          },
+          data: {
+            attempts,
+            ...(attempts >= AUTH_CONFIG.OTP_MAX_ATTEMPTS
+              ? {
+                  revokedAt: now,
+                }
+              : {}),
+          },
+        });
+
+        return false;
+      }
+
+      await tx.verificationToken.update({
+        where: {
+          id: token.id,
+          purpose: TOKEN_PURPOSE.EMAIL_VERIFICATION,
+        },
+        data: {
+          consumedAt: now,
+        },
+      });
+
+      await tx.user.update({
+        where: {
+          id: user.id,
+        },
+        data: {
+          status: 'ACTIVE',
+          emailVerifiedAt: now,
+        },
+      });
+
+      return true;
+    });
+
+    if (!verified) {
+      throw new BadRequestException({
+        message: 'Invalid or expired verification code',
+        errors: {
+          code: ['Invalid or expired verification code'],
+        },
+      });
     }
+
+    return {
+      message: 'Email verified successfully',
+    };
+  }
+
+  async login(dto: LoginDto) {
+    const checkedUser = await this.prisma.user.findUnique({
+      where: {
+        email: dto.email,
+      },
+    });
+
+    if (
+      !checkedUser?.passwordHash ||
+      Buffer.byteLength(dto.password, 'utf8') > AUTH_CONFIG.BCRYPT_MAX_BYTES ||
+      !(await bcrypt.compare(dto.password, checkedUser.passwordHash))
+    ) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const user = await this.lockUser(tx, checkedUser.id, 'id');
+
+      if (
+        !user ||
+        user.status !== 'ACTIVE' ||
+        !user.emailVerifiedAt ||
+        user.passwordHash !== checkedUser.passwordHash
+      ) {
+        throw new UnauthorizedException('Account is not available for login');
+      }
+
+      const familyId = randomUUID();
+
+      const expiresAt =
+        Math.floor(Date.now() / 1000) + AUTH_CONFIG.REFRESH_TTL_SECONDS;
+
+      const pair = await this.createTokenPair(tx, user.id, familyId, expiresAt);
+
+      return {
+        user: this.publicUser(user),
+        pair,
+      };
+    });
+
+    return {
+      message: 'Login successful',
+      data: {
+        user: result.user,
+      },
+      accessToken: result.pair.accessToken,
+      refreshToken: result.pair.refreshToken,
+    };
+  }
+
+  async refresh(refreshToken: string) {
+    const claims = await this.tokens.verifyRefresh(refreshToken);
+
+    const hash = this.hashRefreshToken(refreshToken);
+
+    const result = await this.prisma.$transaction(
+      async (tx): Promise<RefreshResult> => {
+        const user = await this.lockUser(tx, claims.sub, 'id');
+
+        if (!user) {
+          return {
+            ok: false,
+          };
+        }
+
+        const now = new Date();
+
+        if (user.status !== 'ACTIVE' || !user.emailVerifiedAt) {
+          await tx.verificationToken.updateMany({
+            where: {
+              userId: user.id,
+              purpose: TOKEN_PURPOSE.REFRESH_TOKEN,
+              revokedAt: null,
+            },
+            data: {
+              revokedAt: now,
+            },
+          });
+
+          return {
+            ok: false,
+          };
+        }
+
+        const stored = await tx.verificationToken.findFirst({
+          where: {
+            id: claims.jti,
+            userId: user.id,
+            purpose: TOKEN_PURPOSE.REFRESH_TOKEN,
+            familyId: claims.sid,
+            tokenHash: hash,
+          },
+        });
+
+        if (!stored) {
+          return {
+            ok: false,
+          };
+        }
+
+        if (stored.consumedAt || stored.revokedAt) {
+          await tx.verificationToken.updateMany({
+            where: {
+              userId: user.id,
+              purpose: TOKEN_PURPOSE.REFRESH_TOKEN,
+              familyId: claims.sid,
+              revokedAt: null,
+            },
+            data: {
+              revokedAt: now,
+            },
+          });
+
+          return {
+            ok: false,
+          };
+        }
+
+        if (stored.expiresAt <= now) {
+          return {
+            ok: false,
+          };
+        }
+
+        await tx.verificationToken.update({
+          where: {
+            id: stored.id,
+            purpose: TOKEN_PURPOSE.REFRESH_TOKEN,
+          },
+          data: {
+            consumedAt: now,
+          },
+        });
+
+        const pair = await this.createTokenPair(
+          tx,
+          user.id,
+          claims.sid,
+          Math.floor(stored.expiresAt.getTime() / 1000),
+        );
+
+        return {
+          ok: true,
+          pair,
+          user: this.publicUser(user),
+        };
+      },
+    );
+
+    if (!result.ok) {
+      throw new UnauthorizedException(
+        'Invalid refresh token or session revoked',
+      );
+    }
+
+    return {
+      message: 'Token refreshed successfully',
+      data: {
+        user: result.user,
+      },
+      accessToken: result.pair.accessToken,
+      refreshToken: result.pair.refreshToken,
+    };
+  }
+
+  async logout(refreshToken: string) {
+    const claims = await this.tokens.verifyRefresh(refreshToken);
+
+    const hash = this.hashRefreshToken(refreshToken);
+
+    await this.prisma.$transaction(async (tx) => {
+      const user = await this.lockUser(tx, claims.sub, 'id');
+
+      if (!user) {
+        return;
+      }
+
+      const stored = await tx.verificationToken.findFirst({
+        where: {
+          id: claims.jti,
+          userId: user.id,
+          purpose: TOKEN_PURPOSE.REFRESH_TOKEN,
+          familyId: claims.sid,
+          tokenHash: hash,
+        },
+      });
+
+      if (!stored) {
+        return;
+      }
+
+      await tx.verificationToken.updateMany({
+        where: {
+          userId: user.id,
+          purpose: TOKEN_PURPOSE.REFRESH_TOKEN,
+          familyId: claims.sid,
+          revokedAt: null,
+        },
+        data: {
+          revokedAt: new Date(),
+        },
+      });
+    });
+
+    return {
+      message: 'Logged out successfully',
+    };
+  }
+
+  async me(claims: AuthClaims) {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        id: claims.sub,
+        status: 'ACTIVE',
+        emailVerifiedAt: {
+          not: null,
+        },
+        verificationTokens: {
+          some: {
+            purpose: TOKEN_PURPOSE.REFRESH_TOKEN,
+            familyId: claims.sid,
+            consumedAt: null,
+            revokedAt: null,
+            expiresAt: {
+              gt: new Date(),
+            },
+          },
+        },
+      },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        status: true,
+      },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Login session is no longer active');
+    }
+
+    return {
+      data: {
+        user,
+      },
+    };
   }
 }

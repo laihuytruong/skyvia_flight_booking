@@ -30,3 +30,20 @@ export { validationExceptionFactory } from './http/pipes/validation-exception.fa
 export { unwrapServiceResponse } from './http/utils/unwrap-service-response.js'
 
 export { SharedHttpModule } from './modules/shared-http.module.js'
+
+export {
+    parseAuthClaims,
+    readBearerToken,
+    loadRsaPublicKey,
+    loadRsaKeyPair,
+} from './utils/jwt.util.js'
+
+export type { AuthClaims, TokenUse } from './utils/jwt.util.js'
+
+export {
+    AUTH_COOKIE_NAMES,
+    AUTH_COOKIE_MAX_AGE_MS,
+    clearAuthCookies,
+    readAuthCookie,
+    setAuthCookies,
+} from './utils/auth-cookie.util.js'

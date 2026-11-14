@@ -12,3 +12,5 @@ coverage/
 Thumbs.db
 
 apps/*/src/generated/prisma/
+
+**/keys/

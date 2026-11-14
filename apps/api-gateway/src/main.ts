@@ -15,6 +15,7 @@ async function bootstrap() {
 
   app.enableCors({
     origin: config.getOrThrow<string>('WEB_ORIGIN'),
+    credentials: true,
   });
 
   app.enableShutdownHooks();
